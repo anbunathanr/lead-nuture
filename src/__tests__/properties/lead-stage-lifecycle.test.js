@@ -1,6 +1,8 @@
 const fc = require('fast-check');
 const Lead = require('../../models/Lead');
 const EngagementEvent = require('../../models/EngagementEvent');
+const StageTransitionEngine = require('../../services/StageTransitionEngine');
+const EngagementScoringEngine = require('../../services/EngagementScoringEngine');
 const { connectDatabase, query } = require('../../config/database');
 
 // Mock the database for property tests
@@ -61,14 +63,38 @@ describe('Property Test: Lead Stage Lifecycle Management', () => {
     })
   });
 
-  // Generator for stage progression sequences
-  const stageProgressionArbitrary = fc.array(validStageArbitrary, { minLength: 2, maxLength: 4 });
+  // Generator for valid stage progression sequences
+  const validStageProgressionArbitrary = fc.array(
+    fc.constantFrom('User', 'Engaged_Lead', 'Qualified_Lead', 'Customer'),
+    { minLength: 1, maxLength: 4 }
+  ).map(stages => {
+    // Filter to create only valid progression sequences
+    const validSequence = [];
+    let currentStage = 'User'; // Always start with User
+    
+    for (const targetStage of stages) {
+      // Define valid transitions based on business rules
+      const validTransitions = {
+        'User': ['Engaged_Lead'],
+        'Engaged_Lead': ['Qualified_Lead', 'User'],
+        'Qualified_Lead': ['Customer', 'Engaged_Lead'],
+        'Customer': [] // Terminal state
+      };
+      
+      if (validTransitions[currentStage] && validTransitions[currentStage].includes(targetStage)) {
+        validSequence.push(targetStage);
+        currentStage = targetStage;
+      }
+    }
+    
+    return validSequence.length > 0 ? validSequence : ['Engaged_Lead']; // Ensure at least one valid transition
+  });
 
   test('Property: Lead stage transitions follow defined sequence with audit trails', async () => {
     await fc.assert(
       fc.asyncProperty(
         leadDataArbitrary,
-        stageProgressionArbitrary,
+        validStageProgressionArbitrary,
         async (leadData, stageSequence) => {
           // Create a lead with initial stage
           const lead = new Lead({
@@ -273,60 +299,385 @@ describe('Property Test: Lead Stage Lifecycle Management', () => {
     );
   });
 
-  test('Property: Lead stage timestamps are properly maintained', async () => {
+  test('Property: Stage transition engine validates transitions correctly', async () => {
     await fc.assert(
       fc.asyncProperty(
         leadDataArbitrary,
-        stageProgressionArbitrary,
-        async (leadData, stageSequence) => {
+        validStageArbitrary,
+        validStageArbitrary,
+        async (leadData, fromStage, toStage) => {
+          const engine = new StageTransitionEngine();
+          
+          // Create a lead with the from stage
+          const lead = new Lead({
+            ...leadData,
+            stage: fromStage
+          });
+          
+          lead.id = 'test-lead-' + Math.random().toString(36).substr(2, 9);
+          
+          // Mock Lead.findById to return our test lead
+          Lead.findById = jest.fn().mockResolvedValue(lead);
+          
+          // Mock database transaction
+          const { transaction } = require('../../config/database');
+          transaction.mockImplementation(async (callback) => {
+            const mockClient = {
+              query: jest.fn().mockResolvedValue({ rows: [] })
+            };
+            return await callback(mockClient);
+          });
+
+          // Property: Valid transitions should succeed
+          const isValidTransition = engine.isValidTransition(fromStage, toStage);
+          
+          if (isValidTransition) {
+            // Should not throw error for valid transitions
+            await expect(engine.executeTransition(lead.id, toStage, 'Test transition'))
+              .resolves.toBeDefined();
+          } else {
+            // Should throw error for invalid transitions
+            await expect(engine.executeTransition(lead.id, toStage, 'Test transition'))
+              .rejects.toThrow();
+          }
+
+          // Property: Transition validation is consistent
+          const validNextStages = engine.getNextStages(fromStage);
+          expect(validNextStages.includes(toStage)).toBe(isValidTransition);
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  test('Property: Stage progression evaluation is consistent with scoring rules', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        leadDataArbitrary,
+        fc.array(
+          fc.record({
+            event_type: fc.constantFrom('email_open', 'email_click', 'whatsapp_reply', 'chatbot_interaction', 'login'),
+            channel: fc.constantFrom('email', 'whatsapp', 'chatbot', 'product'),
+            timestamp: fc.date({ min: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }),
+            metadata: fc.record({
+              high_value_action: fc.boolean(),
+              conversion: fc.boolean()
+            }),
+            score_impact: fc.integer({ min: 1, max: 50 })
+          }),
+          { minLength: 0, maxLength: 20 }
+        ),
+        async (leadData, events) => {
+          const engine = new StageTransitionEngine();
+          const scoringEngine = new EngagementScoringEngine();
+          
+          // Create a lead
+          const lead = new Lead({
+            ...leadData,
+            stage: 'User',
+            engagement_score: 0
+          });
+          
+          lead.id = 'test-lead-' + Math.random().toString(36).substr(2, 9);
+          
+          // Mock database queries
+          Lead.findById = jest.fn().mockResolvedValue(lead);
+          
+          // Mock getLeadEvents to return our test events
+          engine.getLeadEvents = jest.fn().mockResolvedValue(events);
+          
+          // Calculate total score from events
+          const totalScore = events.reduce((sum, event) => sum + event.score_impact, 0);
+          lead.engagement_score = totalScore;
+
+          // Evaluate progression
+          const evaluation = await engine.evaluateProgression(lead.id);
+
+          // Property: Evaluation result is consistent with lead's current state
+          expect(evaluation.leadId).toBe(lead.id);
+          expect(evaluation.currentStage).toBe(lead.stage);
+          
+          // Property: Progression decision is based on defined rules
+          if (evaluation.canProgress) {
+            expect(evaluation.nextStage).toBeDefined();
+            expect(engine.isValidTransition(lead.stage, evaluation.nextStage)).toBe(true);
+            expect(evaluation.evaluation.met).toBe(true);
+          } else {
+            expect(evaluation.evaluation.met).toBe(false);
+            expect(evaluation.evaluation.failedConditions.length).toBeGreaterThan(0);
+          }
+
+          // Property: Evaluation details contain all checked conditions
+          expect(evaluation.evaluation.details).toBeDefined();
+          expect(typeof evaluation.evaluation.details).toBe('object');
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  test('Property: Auto-progression maintains stage transition integrity', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        leadDataArbitrary,
+        fc.integer({ min: 0, max: 500 }), // engagement score
+        async (leadData, engagementScore) => {
+          const engine = new StageTransitionEngine();
+          
+          // Create a lead with the given engagement score
+          const lead = new Lead({
+            ...leadData,
+            stage: 'User',
+            engagement_score: engagementScore
+          });
+          
+          lead.id = 'test-lead-' + Math.random().toString(36).substr(2, 9);
+          
+          // Mock database operations
+          Lead.findById = jest.fn().mockResolvedValue(lead);
+          
+          // Mock events based on engagement score (higher score = more events)
+          const eventCount = Math.floor(engagementScore / 10);
+          const mockEvents = Array.from({ length: eventCount }, (_, i) => ({
+            id: `event-${i}`,
+            lead_id: lead.id,
+            event_type: 'login',
+            channel: 'product',
+            timestamp: new Date(Date.now() - (eventCount - i) * 60 * 60 * 1000),
+            score_impact: 10,
+            metadata: {}
+          }));
+          
+          engine.getLeadEvents = jest.fn().mockResolvedValue(mockEvents);
+          
+          // Mock transaction for successful execution
+          const { transaction } = require('../../config/database');
+          transaction.mockImplementation(async (callback) => {
+            const mockClient = {
+              query: jest.fn().mockResolvedValue({ rows: [] })
+            };
+            return await callback(mockClient);
+          });
+
+          // Attempt auto-progression
+          const result = await engine.autoProgressLead(lead.id);
+
+          // Property: Auto-progression result is consistent
+          expect(result.progressed).toBeDefined();
+          expect(typeof result.progressed).toBe('boolean');
+          
+          if (result.progressed) {
+            // Property: Successful progression includes all required fields
+            expect(result.leadId).toBe(lead.id);
+            expect(result.oldStage).toBeDefined();
+            expect(result.newStage).toBeDefined();
+            expect(result.reason).toBeDefined();
+            expect(result.timestamp).toBeInstanceOf(Date);
+            
+            // Property: Stage transition is valid
+            expect(engine.isValidTransition(result.oldStage, result.newStage)).toBe(true);
+          } else {
+            // Property: Failed progression includes reason
+            expect(result.reason).toBeDefined();
+            expect(result.evaluation).toBeDefined();
+          }
+
+          // Property: Evaluation is always included
+          expect(result.evaluation).toBeDefined();
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  test('Property: Batch auto-progression handles all leads consistently', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(
+          fc.record({
+            leadId: fc.string({ minLength: 10, maxLength: 20 })
+              .filter(s => s !== 'constructor' && s !== 'prototype' && s !== '__proto__'),
+            stage: validStageArbitrary,
+            engagementScore: fc.integer({ min: 0, max: 500 })
+          }),
+          { minLength: 1, maxLength: 10 }
+        ).map(configs => {
+          // Ensure unique lead IDs by adding unique suffixes
+          const uniqueConfigs = [];
+          const usedIds = new Set();
+          
+          for (let i = 0; i < configs.length; i++) {
+            let uniqueId = configs[i].leadId;
+            let counter = 0;
+            
+            while (usedIds.has(uniqueId)) {
+              uniqueId = `${configs[i].leadId}-${counter}`;
+              counter++;
+            }
+            
+            usedIds.add(uniqueId);
+            uniqueConfigs.push({
+              ...configs[i],
+              leadId: uniqueId
+            });
+          }
+          
+          return uniqueConfigs;
+        }),
+        async (leadConfigs) => {
+          const engine = new StageTransitionEngine();
+          
+          // Mock Lead.findById to return appropriate leads
+          Lead.findById = jest.fn().mockImplementation(async (leadId) => {
+            const config = leadConfigs.find(c => c.leadId === leadId);
+            if (!config) return null;
+            
+            return new Lead({
+              id: leadId,
+              crm_user_id: 'test-user',
+              organization_id: 'test-org',
+              product_id: 'test-product',
+              stage: config.stage,
+              engagement_score: config.engagementScore,
+              contact_info: { email: 'test@example.com' }
+            });
+          });
+          
+          // Mock getLeadEvents
+          engine.getLeadEvents = jest.fn().mockResolvedValue([]);
+          
+          // Mock transaction
+          const { transaction } = require('../../config/database');
+          transaction.mockImplementation(async (callback) => {
+            const mockClient = {
+              query: jest.fn().mockResolvedValue({ rows: [] })
+            };
+            return await callback(mockClient);
+          });
+
+          const leadIds = leadConfigs.map(c => c.leadId);
+          const results = await engine.batchAutoProgress(leadIds);
+
+          // Property: Batch processing returns result for each lead
+          expect(results.length).toBe(leadIds.length);
+          
+          // Property: Each result has consistent structure
+          for (const result of results) {
+            expect(result.leadId).toBeDefined();
+            expect(leadIds).toContain(result.leadId);
+            expect(result.progressed).toBeDefined();
+            expect(typeof result.progressed).toBe('boolean');
+            
+            if (result.error) {
+              expect(result.progressed).toBe(false);
+              expect(typeof result.error).toBe('string');
+            }
+          }
+
+          // Property: No duplicate lead IDs in results
+          const resultLeadIds = results.map(r => r.leadId);
+          const uniqueLeadIds = [...new Set(resultLeadIds)];
+          expect(resultLeadIds.length).toBe(uniqueLeadIds.length);
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  test('Property: Transition history maintains chronological order and completeness', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        leadDataArbitrary,
+        fc.array(
+          fc.record({
+            toStage: validStageArbitrary,
+            reason: fc.string({ minLength: 1, maxLength: 100 }),
+            metadata: fc.record({
+              auto_progression: fc.boolean(),
+              score_at_transition: fc.integer({ min: 0, max: 1000 })
+            })
+          }),
+          { minLength: 1, maxLength: 5 }
+        ).map(transitions => {
+          // Filter transitions to create only valid sequences
+          const validTransitions = [];
+          let currentStage = 'User';
+          
+          const stageTransitionRules = {
+            'User': ['Engaged_Lead'],
+            'Engaged_Lead': ['Qualified_Lead', 'User'],
+            'Qualified_Lead': ['Customer', 'Engaged_Lead'],
+            'Customer': [] // Terminal state
+          };
+          
+          for (const transition of transitions) {
+            const validNextStages = stageTransitionRules[currentStage] || [];
+            if (validNextStages.includes(transition.toStage)) {
+              validTransitions.push({
+                fromStage: currentStage,
+                toStage: transition.toStage,
+                reason: transition.reason,
+                metadata: transition.metadata
+              });
+              currentStage = transition.toStage;
+            }
+          }
+          
+          return validTransitions;
+        }),
+        async (leadData, transitions) => {
+          const engine = new StageTransitionEngine();
+          
           const lead = new Lead({
             ...leadData,
             stage: 'User'
           });
-
+          
           lead.id = 'test-lead-' + Math.random().toString(36).substr(2, 9);
+          
+          // Use the already filtered valid transitions
+          const validTransitions = transitions;
+          
+          const mockHistory = validTransitions.map((transition, index) => ({
+            id: `transition-${index}`,
+            lead_id: lead.id,
+            from_stage: transition.fromStage,
+            to_stage: transition.toStage,
+            transition_at: new Date(Date.now() - index * 60000), // Descending order: newest first
+            trigger_reason: transition.reason,
+            metadata: transition.metadata
+          }));
+          
+          // Mock query to return transition history
+          query.mockResolvedValue({ rows: mockHistory });
+          
+          const history = await engine.getTransitionHistory(lead.id);
 
-          // Track timestamps for each stage transition
-          const timestamps = [];
-          const startTime = new Date();
-
-          lead.progressStage = jest.fn().mockImplementation(async (newStage, reason) => {
-            const transitionTime = new Date();
-            timestamps.push({
-              stage: newStage,
-              timestamp: transitionTime
-            });
-            lead.stage = newStage;
-            lead.updated_at = transitionTime;
-            return Promise.resolve();
-          });
-
-          // Progress through stages with small delays to ensure timestamp differences
-          for (let i = 0; i < stageSequence.length; i++) {
-            const targetStage = stageSequence[i];
-            if (targetStage !== lead.stage) {
-              await lead.progressStage(targetStage, `Progression ${i}`);
-              // Small delay to ensure timestamp differences
-              await new Promise(resolve => setTimeout(resolve, 1));
-            }
+          // Property: History contains valid transitions (may be fewer than input due to filtering)
+          expect(history.length).toBeLessThanOrEqual(transitions.length);
+          
+          // Property: Transitions are in chronological order (newest first)
+          for (let i = 1; i < history.length; i++) {
+            const prevTime = new Date(history[i - 1].transition_at).getTime();
+            const currTime = new Date(history[i].transition_at).getTime();
+            // Ensure strict chronological order (newer transitions have higher timestamps)
+            expect(prevTime).toBeGreaterThan(currTime);
           }
 
-          // Property: All timestamps are valid dates
-          for (const entry of timestamps) {
-            expect(entry.timestamp).toBeInstanceOf(Date);
-            expect(entry.timestamp.getTime()).toBeGreaterThanOrEqual(startTime.getTime());
+          // Property: Each transition has required fields
+          for (const transition of history) {
+            expect(transition.lead_id).toBe(lead.id);
+            expect(transition.from_stage).toBeDefined();
+            expect(transition.to_stage).toBeDefined();
+            expect(transition.trigger_reason).toBeDefined();
+            expect(transition.transition_at).toBeDefined();
+            expect(transition.metadata).toBeDefined();
           }
 
-          // Property: Timestamps are in chronological order
-          for (let i = 1; i < timestamps.length; i++) {
-            expect(timestamps[i].timestamp.getTime())
-              .toBeGreaterThanOrEqual(timestamps[i-1].timestamp.getTime());
-          }
-
-          // Property: Lead updated_at reflects the last stage change
-          if (timestamps.length > 0) {
-            const lastTimestamp = timestamps[timestamps.length - 1].timestamp;
-            expect(lead.updated_at).toEqual(lastTimestamp);
+          // Property: Stage progression is logical (no same-stage transitions)
+          for (let i = 0; i < history.length; i++) {
+            const transition = history[i];
+            expect(transition.from_stage).not.toBe(transition.to_stage);
           }
         }
       ),

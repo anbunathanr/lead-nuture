@@ -63,18 +63,18 @@ This implementation plan transforms the lead nurturing automation design into a 
     - **Property 2: Lead Stage Lifecycle Management**
     - **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6**
 
-- [ ] 4. Implement lead stage management and progression logic
-  - [ ] 4.1 Create stage transition engine
+- [x] 4. Implement lead stage management and progression logic
+  - [x] 4.1 Create stage transition engine
     - Implement stage progression rules and validation
     - Add audit trail logging for all transitions
     - _Requirements: 2.2, 2.3, 2.4, 2.5, 2.6_
 
-  - [ ] 4.2 Implement engagement scoring algorithm
+  - [x] 4.2 Implement engagement scoring algorithm
     - Create configurable scoring rules per product
     - Implement threshold-based qualification logic
     - _Requirements: 5.2, 5.3_
 
-  - [ ] 4.3 Write property test for stage transitions
+  - [x] 4.3 Write property test for stage transitions
     - **Property 2: Lead Stage Lifecycle Management**
     - **Validates: Requirements 2.2, 2.3, 2.4, 2.5, 2.6**
 
