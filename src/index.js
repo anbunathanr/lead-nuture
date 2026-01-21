@@ -35,12 +35,23 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes will be added here as we implement them
+// Import route handlers
+const leadsRouter = require('./routes/leads');
+const engagementRouter = require('./routes/engagement');
+
+// API routes
+app.use('/api/leads', leadsRouter);
+app.use('/api/leads', engagementRouter);
+
 app.get('/', (req, res) => {
   res.json({
     message: 'Lead Nurturing Automation API',
     version: '1.0.0',
-    status: 'running'
+    status: 'running',
+    endpoints: {
+      leads: '/api/leads',
+      health: '/health'
+    }
   });
 });
 

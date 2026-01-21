@@ -41,25 +41,25 @@ This implementation plan transforms the lead nurturing automation design into a 
     - **Property 5: Engagement Processing and Scoring**
     - **Validates: Requirements 5.1, 5.2, 5.3**
 
-- [ ] 3. Build Lead Tracker API endpoints
-  - [ ] 3.1 Implement CRUD operations for leads
+- [x] 3. Build Lead Tracker API endpoints
+  - [x] 3.1 Implement CRUD operations for leads
     - POST /leads - Create new lead
     - PUT /leads/:id - Update lead information
     - GET /leads/:id - Retrieve lead details
     - _Requirements: 2.1, 7.4_
 
-  - [ ] 3.2 Implement engagement tracking endpoints
+  - [x] 3.2 Implement engagement tracking endpoints
     - POST /leads/:id/events - Record engagement event
     - GET /leads/:id/score - Get current engagement score
     - POST /leads/:id/stage - Update lead stage
     - _Requirements: 5.1, 5.2, 2.2, 2.3, 2.4_
 
-  - [ ] 3.3 Write unit tests for API endpoints
+  - [x] 3.3 Write unit tests for API endpoints
     - Test CRUD operations with edge cases
     - Test error handling and validation
     - _Requirements: 7.4_
 
-  - [ ] 3.4 Write property test for lead stage lifecycle
+  - [x] 3.4 Write property test for lead stage lifecycle
     - **Property 2: Lead Stage Lifecycle Management**
     - **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6**
 
