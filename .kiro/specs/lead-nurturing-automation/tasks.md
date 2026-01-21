@@ -17,27 +17,27 @@ This implementation plan transforms the lead nurturing automation design into a 
   - **Property 10: CRM Read-Only Integrity**
   - **Validates: Requirements 1.3**
 
-- [ ] 2. Implement Lead Tracker core data models and database schema
-  - [ ] 2.1 Create database schema for leads, events, scores, and product configs
+- [x] 2. Implement Lead Tracker core data models and database schema
+  - [x] 2.1 Create database schema for leads, events, scores, and product configs
     - Write SQL migration scripts for all tables
     - Implement database indexes for performance
     - _Requirements: 7.1, 7.2_
 
-  - [ ] 2.2 Implement Lead data model with validation
+  - [x] 2.2 Implement Lead data model with validation
     - Create Lead class with validation methods
     - Implement engagement score calculation logic
     - _Requirements: 2.1, 5.2_
 
-  - [ ] 2.3 Write property test for lead data model
+  - [x] 2.3 Write property test for lead data model
     - **Property 7: Data Independence and Consistency**
     - **Validates: Requirements 7.1, 7.2**
 
-  - [ ] 2.4 Implement EngagementEvent data model
+  - [x] 2.4 Implement EngagementEvent data model
     - Create EngagementEvent class with metadata handling
     - Implement score impact calculation
     - _Requirements: 5.1, 5.2_
 
-  - [ ] 2.5 Write property test for engagement event processing
+  - [x] 2.5 Write property test for engagement event processing
     - **Property 5: Engagement Processing and Scoring**
     - **Validates: Requirements 5.1, 5.2, 5.3**
 
