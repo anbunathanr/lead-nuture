@@ -1,0 +1,481 @@
+{
+  "name": "Lead Nurturing - Categorized Multi-Channel",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "unit": "minutes",
+              "value": 5
+            }
+          ]
+        }
+      },
+      "id": "node-cron",
+      "name": "Cron Trigger (Every 5m)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://34.196.221.16:8000/api/resource/CRM Lead",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ 'sid=' + ($env.CRM_SID || 'YOUR_SESSION_ID') }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "[\"name\",\"email\",\"mobile_no\",\"status\",\"organization\"]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-crm",
+      "name": "Fetch CRM Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.data || [];\n\nreturn rows.map(lead => ({\n  json: {\n    id: lead.name,\n    name: lead.name,\n    email: lead.email,\n    phone: lead.mobile_no,\n    status: lead.status,\n    product: lead.organization,\n    company: lead.organization,\n    login_count: 0\n  }\n}));"
+      },
+      "id": "node-convert-data",
+      "name": "Convert CRM Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.filter(item => item.json.status === 'New');"
+      },
+      "id": "node-only-new",
+      "name": "Only New Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of items) {\n  if (item.json.status === 'New') {\n    item.json.lead_type = 'Cold';\n  } else if (item.json.status === 'Contacted') {\n    item.json.lead_type = 'Warm';\n  } else {\n    item.json.lead_type = 'Hot';\n  }\n\n  item.json.lead_status = item.json.lead_type.toUpperCase();\n  item.json.crm_status = item.json.lead_type;\n\n  let p = String(item.json.phone || '').trim();\n  const hasPlus = p.startsWith('+');\n  p = p.replace(/[^\\d]/g, '');\n\n  if (p) {\n    if (hasPlus) item.json.phone_normalized = `+${p}`;\n    else if (p.length === 10) item.json.phone_normalized = `+91${p}`;\n    else item.json.phone_normalized = `+${p}`;\n  } else {\n    item.json.phone_normalized = '';\n  }\n\n  item.json.product = item.json.product || 'our products';\n}\n\nreturn items;"
+      },
+      "id": "node-classify",
+      "name": "Classify + Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [{
+            "id": "c1",
+            "leftValue": "={{ $json.lead_status }}",
+            "rightValue": "HOT",
+            "operator": { "type": "string", "operation": "equals" }
+          }],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-hot",
+      "name": "Is HOT?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [{
+            "id": "c2",
+            "leftValue": "={{ $json.lead_status }}",
+            "rightValue": "WARM",
+            "operator": { "type": "string", "operation": "equals" }
+          }],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-warm",
+      "name": "Is WARM?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 420]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL || 'YOUR_SLACK_WEBHOOK_URL' }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"HOT LEAD\\n\\nName: {{ $json.name }}\\nEmail: {{ $json.email }}\\nPhone: {{ $json.phone }}\\nCompany: {{ $json.company }}\\nProduct: {{ $json.product }}\\nScore: {{ $json.login_count }}/10\\n\\nAction: Contact immediately.\\nCalendly: https://calendly.com/digitrans-solutions\"\n}",
+        "options": {}
+      },
+      "id": "node-slack-hot",
+      "name": "Slack - HOT Team",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 120]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID || 'YOUR_TELEGRAM_CHAT_ID' }}",
+        "text": "=HOT LEAD\\n\\n{{ $json.name }}\\n{{ $json.email }}\\n{{ $json.phone }}\\n{{ $json.product }}\\nScore: {{ $json.login_count }}/10\\n\\nContact now: https://calendly.com/digitrans-solutions",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "node-telegram-hot",
+      "name": "Telegram - HOT Team",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [900, 220],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram account" }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM_EMAIL || 'you@example.com' }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "=HOT lead support for {{ $json.name }}",
+        "text": "=Hi {{ $json.name }},\\n\\nThanks for your strong interest in {{ $json.product }}.\\n\\nOur team is ready to help you get started quickly.\\nBook a short call: https://calendly.com/digitrans-solutions\\n\\nRegards,\\nDigitrans Solutions",
+        "options": {}
+      },
+      "id": "node-email-hot",
+      "name": "Email - HOT Customer",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [900, 320],
+      "credentials": {
+        "smtp": { "id": "SMTP_CRED_ID", "name": "SMTP account 3" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$env.TWILIO_ACCOUNT_SID || 'YOUR_TWILIO_ACCOUNT_SID'}}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "From", "value": "whatsapp:+14155238886" },
+            { "name": "To", "value": "=whatsapp:{{ $json.phone_normalized }}" },
+            { "name": "Body", "value": "=Hi {{ $json.name }}, thanks for your interest in {{ $json.product }}. Book a call: https://calendly.com/digitrans-solutions" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-wa-hot",
+      "name": "WhatsApp - HOT Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 420],
+      "credentials": {
+        "httpBasicAuth": { "id": "TWILIO_BASIC_AUTH_ID", "name": "Twilio Basic Auth" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$env.TWILIO_ACCOUNT_SID || 'YOUR_TWILIO_ACCOUNT_SID'}}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "From", "value": "+17405308047" },
+            { "name": "To", "value": "={{ $json.phone_normalized }}" },
+            { "name": "Body", "value": "=Hi {{ $json.name }}, Digitrans here. You showed strong interest in {{ $json.product }}. Book now: https://calendly.com/digitrans-solutions" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-sms-hot",
+      "name": "SMS - HOT Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 520],
+      "credentials": {
+        "httpBasicAuth": { "id": "TWILIO_BASIC_AUTH_ID", "name": "Twilio Basic Auth" }
+      }
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL || 'YOUR_SLACK_WEBHOOK_URL' }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"WARM LEAD\\n\\nName: {{ $json.name }}\\nEmail: {{ $json.email }}\\nPhone: {{ $json.phone }}\\nCompany: {{ $json.company }}\\nProduct: {{ $json.product }}\\nScore: {{ $json.login_count }}/10\\n\\nAction: Follow up today.\\nCalendly: https://calendly.com/digitrans-solutions\"\n}",
+        "options": {}
+      },
+      "id": "node-slack-warm",
+      "name": "Slack - WARM Team",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1140, 320]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID || 'YOUR_TELEGRAM_CHAT_ID' }}",
+        "text": "=WARM LEAD\\n\\n{{ $json.name }}\\n{{ $json.email }}\\n{{ $json.phone }}\\n{{ $json.product }}\\nScore: {{ $json.login_count }}/10\\n\\nFollow up: https://calendly.com/digitrans-solutions",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "node-telegram-warm",
+      "name": "Telegram - WARM Team",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1140, 420],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram account" }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM_EMAIL || 'you@example.com' }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "=Demo invite for {{ $json.name }}",
+        "text": "=Hi {{ $json.name }},\\n\\nThanks for exploring {{ $json.product }}.\\n\\nBook a quick demo with us: https://calendly.com/digitrans-solutions\\n\\nRegards,\\nDigitrans Solutions",
+        "options": {}
+      },
+      "id": "node-email-warm",
+      "name": "Email - WARM Customer",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1140, 520],
+      "credentials": {
+        "smtp": { "id": "SMTP_CRED_ID", "name": "SMTP account 3" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$env.TWILIO_ACCOUNT_SID || 'YOUR_TWILIO_ACCOUNT_SID'}}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "From", "value": "whatsapp:+14155238886" },
+            { "name": "To", "value": "=whatsapp:{{ $json.phone_normalized }}" },
+            { "name": "Body", "value": "=Hi {{ $json.name }}, we would love to show {{ $json.product }} in a free demo. Book here: https://calendly.com/digitrans-solutions" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-wa-warm",
+      "name": "WhatsApp - WARM Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1140, 620],
+      "credentials": {
+        "httpBasicAuth": { "id": "TWILIO_BASIC_AUTH_ID", "name": "Twilio Basic Auth" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$env.TWILIO_ACCOUNT_SID || 'YOUR_TWILIO_ACCOUNT_SID'}}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "From", "value": "+17405308047" },
+            { "name": "To", "value": "={{ $json.phone_normalized }}" },
+            { "name": "Body", "value": "=Hi {{ $json.name }}, thanks for checking {{ $json.product }}. Let's connect: https://calendly.com/digitrans-solutions" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-sms-warm",
+      "name": "SMS - WARM Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1140, 720],
+      "credentials": {
+        "httpBasicAuth": { "id": "TWILIO_BASIC_AUTH_ID", "name": "Twilio Basic Auth" }
+      }
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM_EMAIL || 'you@example.com' }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "=Welcome to Digitrans, {{ $json.name }}",
+        "text": "=Hi {{ $json.name }},\\n\\nThanks for your interest in {{ $json.product }}.\\n\\nYou can explore and book a consultation anytime: https://calendly.com/digitrans-solutions\\n\\nRegards,\\nDigitrans Solutions",
+        "options": {}
+      },
+      "id": "node-email-cold",
+      "name": "Email - COLD Customer",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1360, 520],
+      "credentials": {
+        "smtp": { "id": "SMTP_CRED_ID", "name": "SMTP account 3" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$env.TWILIO_ACCOUNT_SID || 'YOUR_TWILIO_ACCOUNT_SID'}}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "From", "value": "whatsapp:+14155238886" },
+            { "name": "To", "value": "=whatsapp:{{ $json.phone_normalized }}" },
+            { "name": "Body", "value": "=Hi {{ $json.name }}, thanks for your interest in {{ $json.product }}. If you want a quick walkthrough, book here: https://calendly.com/digitrans-solutions" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-wa-cold",
+      "name": "WhatsApp - COLD Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1360, 620],
+      "credentials": {
+        "httpBasicAuth": { "id": "TWILIO_BASIC_AUTH_ID", "name": "Twilio Basic Auth" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$env.TWILIO_ACCOUNT_SID || 'YOUR_TWILIO_ACCOUNT_SID'}}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "From", "value": "+17405308047" },
+            { "name": "To", "value": "={{ $json.phone_normalized }}" },
+            { "name": "Body", "value": "=Hi {{ $json.name }}, Digitrans here. Reach out anytime for {{ $json.product }}: https://calendly.com/digitrans-solutions" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-sms-cold",
+      "name": "SMS - COLD Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1360, 720],
+      "credentials": {
+        "httpBasicAuth": { "id": "TWILIO_BASIC_AUTH_ID", "name": "Twilio Basic Auth" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=http://34.196.221.16:8000/api/resource/CRM Lead/{{$json.id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ 'sid=' + ($env.CRM_SID || 'YOUR_SESSION_ID') }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"{{ $json.crm_status }}\"\n}",
+        "options": {}
+      },
+      "id": "node-update-crm",
+      "name": "Update CRM Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1560, 360]
+    }
+  ],
+  "connections": {
+    "Cron Trigger (Every 5m)": {
+      "main": [[{ "node": "Fetch CRM Leads", "type": "main", "index": 0 }]]
+    },
+    "Fetch CRM Leads": {
+      "main": [[{ "node": "Convert CRM Data", "type": "main", "index": 0 }]]
+    },
+    "Convert CRM Data": {
+      "main": [[{ "node": "Only New Leads", "type": "main", "index": 0 }]]
+    },
+    "Only New Leads": {
+      "main": [[{ "node": "Classify + Normalize", "type": "main", "index": 0 }]]
+    },
+    "Classify + Normalize": {
+      "main": [[{ "node": "Is HOT?", "type": "main", "index": 0 }]]
+    },
+    "Is HOT?": {
+      "main": [
+        [
+          { "node": "Slack - HOT Team", "type": "main", "index": 0 },
+          { "node": "Telegram - HOT Team", "type": "main", "index": 0 },
+          { "node": "Email - HOT Customer", "type": "main", "index": 0 },
+          { "node": "WhatsApp - HOT Customer", "type": "main", "index": 0 },
+          { "node": "SMS - HOT Customer", "type": "main", "index": 0 },
+          { "node": "Update CRM Status", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Is WARM?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Is WARM?": {
+      "main": [
+        [
+          { "node": "Slack - WARM Team", "type": "main", "index": 0 },
+          { "node": "Telegram - WARM Team", "type": "main", "index": 0 },
+          { "node": "Email - WARM Customer", "type": "main", "index": 0 },
+          { "node": "WhatsApp - WARM Customer", "type": "main", "index": 0 },
+          { "node": "SMS - WARM Customer", "type": "main", "index": 0 },
+          { "node": "Update CRM Status", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Email - COLD Customer", "type": "main", "index": 0 },
+          { "node": "WhatsApp - COLD Customer", "type": "main", "index": 0 },
+          { "node": "SMS - COLD Customer", "type": "main", "index": 0 },
+          { "node": "Update CRM Status", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}

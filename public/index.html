@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Get Started — LeadFlow</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;color:#1e293b;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}
+
+    .wrapper{width:100%;max-width:560px}
+
+    .logo{text-align:center;margin-bottom:1.75rem}
+    .logo h1{font-size:1.6rem;font-weight:800;color:#6366f1}
+    .logo p{color:#64748b;font-size:0.88rem;margin-top:0.3rem}
+
+    .card{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08);padding:2rem}
+
+    .steps{display:flex;gap:0.4rem;margin-bottom:1.75rem}
+    .step{flex:1;height:4px;border-radius:2px;background:#e2e8f0;transition:background 0.3s}
+    .step.active{background:#6366f1}
+    .step.done{background:#22c55e}
+
+    .step-title{font-size:1.05rem;font-weight:700;color:#0f172a;margin-bottom:0.2rem}
+    .step-sub{font-size:0.8rem;color:#94a3b8;margin-bottom:1.4rem}
+
+    .field{margin-bottom:1rem}
+    label{display:block;font-size:0.8rem;font-weight:600;color:#475569;margin-bottom:0.35rem}
+    input,select,textarea{width:100%;padding:0.65rem 0.85rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:0.88rem;color:#0f172a;outline:none;transition:border-color 0.2s;background:#fff}
+    input:focus,select:focus,textarea:focus{border-color:#6366f1}
+    textarea{resize:vertical;min-height:70px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem}
+
+    /* Who are you cards */
+    .who-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:0.6rem;margin-top:0.35rem}
+    .who-card{border:1.5px solid #e2e8f0;border-radius:10px;padding:0.85rem;cursor:pointer;transition:all 0.15s;text-align:center}
+    .who-card:hover{border-color:#a5b4fc;background:#f5f3ff}
+    .who-card.selected{border-color:#6366f1;background:#eef2ff}
+    .who-card .who-icon{font-size:1.6rem;display:block;margin-bottom:0.3rem}
+    .who-card .who-name{font-size:0.82rem;font-weight:700;color:#1e293b}
+    .who-card .who-desc{font-size:0.7rem;color:#94a3b8;margin-top:0.15rem}
+
+    /* Product cards */
+    .products-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-top:0.35rem}
+    .product-card{border:1.5px solid #e2e8f0;border-radius:10px;padding:0.75rem 0.85rem;cursor:pointer;transition:all 0.15s;position:relative}
+    .product-card:hover{border-color:#a5b4fc;background:#f5f3ff}
+    .product-card.selected{border-color:#6366f1;background:#eef2ff}
+    .p-check{position:absolute;top:0.5rem;right:0.6rem;width:16px;height:16px;border-radius:50%;border:2px solid #cbd5e1;display:flex;align-items:center;justify-content:center;font-size:0.6rem;color:transparent;transition:all 0.15s}
+    .product-card.selected .p-check{background:#6366f1;border-color:#6366f1;color:#fff}
+    .p-name{font-size:0.82rem;font-weight:600;color:#1e293b;line-height:1.3;padding-right:1.2rem}
+    .p-meta{font-size:0.7rem;color:#64748b;margin-top:0.25rem}
+    .p-free{color:#22c55e;font-weight:700}
+
+    /* Plan toggle */
+    .plan-toggle{display:flex;gap:0.75rem;margin-top:0.35rem}
+    .plan-btn{flex:1;padding:0.75rem;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;text-align:center;transition:all 0.15s;background:#fff}
+    .plan-btn:hover{border-color:#a5b4fc}
+    .plan-btn.selected{border-color:#6366f1;background:#eef2ff}
+    .plan-btn .plan-icon{font-size:1.4rem;display:block;margin-bottom:0.3rem}
+    .plan-btn .plan-name{font-size:0.85rem;font-weight:700;color:#1e293b}
+    .plan-btn .plan-desc{font-size:0.7rem;color:#64748b;margin-top:0.15rem}
+
+    /* Pills */
+    .pills{display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.35rem}
+    .pill{padding:0.4rem 0.9rem;border:1.5px solid #e2e8f0;border-radius:999px;font-size:0.8rem;cursor:pointer;transition:all 0.15s;color:#475569}
+    .pill:hover{border-color:#a5b4fc;color:#6366f1}
+    .pill.selected{border-color:#6366f1;background:#eef2ff;color:#6366f1;font-weight:600}
+
+    /* Conditional field */
+    .conditional{display:none}
+
+    .btn-row{display:flex;gap:0.75rem;margin-top:1.5rem}
+    .btn{flex:1;padding:0.75rem;border-radius:8px;font-size:0.92rem;font-weight:600;cursor:pointer;border:none;transition:all 0.2s}
+    .btn-primary{background:#6366f1;color:#fff}
+    .btn-primary:hover{background:#4f46e5}
+    .btn-primary:disabled{background:#c7d2fe;cursor:not-allowed}
+    .btn-secondary{background:#f1f5f9;color:#475569}
+    .btn-secondary:hover{background:#e2e8f0}
+
+    /* Result */
+    .result{display:none;text-align:center;padding:1rem 0}
+    .result-badge{display:inline-block;padding:0.5rem 1.5rem;border-radius:999px;font-size:1rem;font-weight:700;margin-bottom:1rem}
+    .result-badge.HOT {background:#fef2f2;color:#ef4444;border:2px solid #fca5a5}
+    .result-badge.WARM{background:#fff7ed;color:#f97316;border:2px solid #fdba74}
+    .result-badge.COLD{background:#eff6ff;color:#3b82f6;border:2px solid #93c5fd}
+    .result h2{font-size:1.15rem;font-weight:700;margin-bottom:0.4rem}
+    .result p{color:#64748b;font-size:0.85rem;margin-bottom:1rem}
+    .action-box{border-radius:10px;padding:0.85rem 1rem;font-size:0.83rem;margin-bottom:1rem;text-align:left}
+    .action-box.hot {background:#f0fdf4;border:1px solid #86efac;color:#166534}
+    .action-box.warm{background:#fff7ed;border:1px solid #fdba74;color:#9a3412}
+    .action-box.cold{background:#eff6ff;border:1px solid #93c5fd;color:#1e40af}
+    .res-products{margin-top:0.5rem;font-size:0.8rem;color:#64748b}
+    .res-products span{display:inline-block;background:#f1f5f9;border-radius:4px;padding:0.2rem 0.5rem;margin:0.15rem;color:#475569}
+
+    .err{background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:0.6rem 0.85rem;font-size:0.82rem;color:#dc2626;margin-top:0.75rem;display:none}
+
+    .links{display:flex;gap:1rem;justify-content:center;margin-top:1.5rem;font-size:0.82rem}
+    .links a{color:#6366f1;text-decoration:none}
+
+    @media(max-width:480px){
+      .products-grid,.who-grid{grid-template-columns:1fr}
+      .row{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+<div class="wrapper">
+  <div class="logo">
+    <h1>🎯 LeadFlow</h1>
+    <p>Tell us about yourself — we'll personalise your experience</p>
+  </div>
+
+  <div class="card">
+    <div class="steps">
+      <div class="step active" id="si-1"></div>
+      <div class="step" id="si-2"></div>
+      <div class="step" id="si-3"></div>
+    </div>
+
+    <!-- ── STEP 1: Who are you ── -->
+    <div id="step1">
+      <div class="step-title">👋 Who are you?</div>
+      <div class="step-sub">Step 1 of 3 — Everyone is welcome</div>
+
+      <div class="who-grid">
+        <div class="who-card" onclick="selectWho('student',this)">
+          <span class="who-icon">🎓</span>
+          <div class="who-name">Student</div>
+          <div class="who-desc">Learning & projects</div>
+        </div>
+        <div class="who-card" onclick="selectWho('individual',this)">
+          <span class="who-icon">👤</span>
+          <div class="who-name">Individual</div>
+          <div class="who-desc">Personal use</div>
+        </div>
+        <div class="who-card" onclick="selectWho('freelancer',this)">
+          <span class="who-icon">💻</span>
+          <div class="who-name">Freelancer</div>
+          <div class="who-desc">Client work</div>
+        </div>
+        <div class="who-card" onclick="selectWho('business',this)">
+          <span class="who-icon">🏢</span>
+          <div class="who-name">Business / Team</div>
+          <div class="who-desc">Company or startup</div>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:1rem">
+        <label>Full Name *</label>
+        <input id="name" type="text" placeholder="Your name"/>
+      </div>
+      <div class="field">
+        <label>Email *</label>
+        <input id="email" type="email" placeholder="you@example.com"/>
+      </div>
+      <div class="field">
+        <label>Phone <span style="color:#94a3b8;font-weight:400">(optional)</span></label>
+        <input id="phone" type="text" placeholder="9876543210"/>
+      </div>
+
+      <!-- shown only for business -->
+      <div class="field conditional" id="companyField">
+        <label>Company / Organisation Name</label>
+        <input id="company" type="text" placeholder="Acme Inc."/>
+      </div>
+
+      <!-- shown only for student -->
+      <div class="field conditional" id="collegeField">
+        <label>College / University</label>
+        <input id="college" type="text" placeholder="IIT Bombay"/>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="goStep(2)">Continue →</button>
+      </div>
+    </div>
+
+    <!-- ── STEP 2: Products ── -->
+    <div id="step2" style="display:none">
+      <div class="step-title">🛍️ Which products interest you?</div>
+      <div class="step-sub">Step 2 of 3 — Pick one or more</div>
+
+      <div class="products-grid" id="productsGrid"></div>
+
+      <div class="field" style="margin-top:1.25rem">
+        <label>Free or Paid?</label>
+        <div class="plan-toggle">
+          <div class="plan-btn" id="plan-free" onclick="selectPlan('free')">
+            <span class="plan-icon">🆓</span>
+            <div class="plan-name">Free</div>
+            <div class="plan-desc">Start at no cost</div>
+          </div>
+          <div class="plan-btn" id="plan-paid" onclick="selectPlan('paid')">
+            <span class="plan-icon">💳</span>
+            <div class="plan-name">Paid</div>
+            <div class="plan-desc">Full features</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="goStep(1)">← Back</button>
+        <button class="btn btn-primary" onclick="goStep(3)">Continue →</button>
+      </div>
+    </div>
+
+    <!-- ── STEP 3: Intent ── -->
+    <div id="step3" style="display:none">
+      <div class="step-title">📊 Last few questions</div>
+      <div class="step-sub">Step 3 of 3 — Helps us help you better</div>
+
+      <div class="field">
+        <label>What do you want to use this for?</label>
+        <div class="pills" id="goalPills">
+          <div class="pill" onclick="selectPill('goal','automate',this)">Automate tasks</div>
+          <div class="pill" onclick="selectPill('goal','learn',this)">Learning / Research</div>
+          <div class="pill" onclick="selectPill('goal','project',this)">College project</div>
+          <div class="pill" onclick="selectPill('goal','client',this)">Client work</div>
+          <div class="pill" onclick="selectPill('goal','business',this)">Grow my business</div>
+          <div class="pill" onclick="selectPill('goal','explore',this)">Just exploring</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>How soon do you need this?</label>
+        <div class="pills" id="urgencyPills">
+          <div class="pill" onclick="selectPill('urgency','immediate',this)">Right now</div>
+          <div class="pill" onclick="selectPill('urgency','month',this)">Within a month</div>
+          <div class="pill" onclick="selectPill('urgency','exploring',this)">No rush</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Anything else you'd like us to know? <span style="color:#94a3b8;font-weight:400">(optional)</span></label>
+        <textarea id="notes" placeholder="Questions, requirements, your use case…"></textarea>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="goStep(2)">← Back</button>
+        <button class="btn btn-primary" id="submitBtn" onclick="submitLead()">Submit →</button>
+      </div>
+      <div class="err" id="errMsg"></div>
+    </div>
+
+    <!-- ── RESULT ── -->
+    <div class="result" id="resultDiv">
+      <div class="result-badge" id="resBadge"></div>
+      <h2 id="resTitle"></h2>
+      <p id="resSub"></p>
+      <div class="action-box" id="resAction"></div>
+      <div class="res-products" id="resProducts"></div>
+      <button class="btn btn-primary" style="width:100%;margin-top:1.25rem" onclick="resetForm()">Submit Another Enquiry</button>
+    </div>
+  </div>
+
+  <div class="links">
+    <a href="/dashboard.html">📊 Admin Dashboard</a>
+    <a href="/api/leads" target="_blank">🔌 API</a>
+  </div>
+</div>
+
+<script>
+  const PRODUCTS = [
+    { id:'cardiac', name:'AI-Powered Cardiac Monitoring', price:'₹199',   tag:'AI · Health',      free:false },
+    { id:'cbm',     name:'Digital Twin CBM – Packaging SPM', price:'Free', tag:'IoT · Industry',  free:true  },
+    { id:'social',  name:'AI Social Media Poster',        price:'₹500',   tag:'AI · Marketing',   free:false },
+    { id:'testing', name:'AI Automated Unit Testing',     price:'₹9,000', tag:'AI · Dev Tools',   free:false },
+    { id:'test',    name:'Test Product',                  price:'₹100',   tag:'Demo',              free:false },
+    { id:'voice',   name:'Voice AI on Website',           price:'₹2,600', tag:'AI · Web',         free:false },
+    { id:'misra',   name:'MISRA Compliance Checker',      price:'₹5,300', tag:'Compliance',        free:false },
+  ];
+
+  const state = { who:'', plan:'', urgency:'', goal:'', products: new Set() };
+
+  // Build product cards
+  const grid = document.getElementById('productsGrid');
+  PRODUCTS.forEach(p => {
+    const d = document.createElement('div');
+    d.className = 'product-card';
+    d.id = 'pc-'+p.id;
+    d.innerHTML = `
+      <div class="p-check">✓</div>
+      <div class="p-name">${p.name}</div>
+      <div class="p-meta">
+        <span class="${p.free?'p-free':''}">${p.price}</span>
+        &nbsp;·&nbsp;${p.tag}
+      </div>`;
+    d.onclick = () => {
+      if (state.products.has(p.id)) { state.products.delete(p.id); d.classList.remove('selected'); }
+      else { state.products.add(p.id); d.classList.add('selected'); }
+    };
+    grid.appendChild(d);
+  });
+
+  function selectWho(val, el) {
+    state.who = val;
+    document.querySelectorAll('.who-card').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    // Show/hide conditional fields
+    document.getElementById('companyField').style.display = val === 'business'  ? 'block' : 'none';
+    document.getElementById('collegeField').style.display = val === 'student'   ? 'block' : 'none';
+  }
+
+  function selectPlan(p) {
+    state.plan = p;
+    document.getElementById('plan-free').classList.toggle('selected', p==='free');
+    document.getElementById('plan-paid').classList.toggle('selected', p==='paid');
+  }
+
+  function selectPill(type, val, el) {
+    state[type] = val;
+    el.closest('.pills').querySelectorAll('.pill').forEach(p => p.classList.remove('selected'));
+    el.classList.add('selected');
+  }
+
+  function goStep(n) {
+    if (n === 2) {
+      if (!state.who)                                          { alert('Please select who you are'); return; }
+      if (!document.getElementById('name').value.trim())      { alert('Please enter your name'); return; }
+      const em = document.getElementById('email').value.trim();
+      if (!em || !em.includes('@'))                           { alert('Please enter a valid email'); return; }
+    }
+    if (n === 3) {
+      if (state.products.size === 0) { alert('Please select at least one product'); return; }
+      if (!state.plan)               { alert('Please choose Free or Paid'); return; }
+    }
+    [1,2,3].forEach(i => {
+      const el = document.getElementById('step'+i);
+      if (el) el.style.display = i===n ? 'block' : 'none';
+      const si = document.getElementById('si-'+i);
+      if (si) si.className = 'step'+(i<n?' done':i===n?' active':'');
+    });
+  }
+
+  async function submitLead() {
+    const btn = document.getElementById('submitBtn');
+    const err = document.getElementById('errMsg');
+    err.style.display = 'none';
+    btn.disabled = true; btn.textContent = 'Submitting…';
+
+    const selectedNames = [...state.products].map(id => PRODUCTS.find(p=>p.id===id)?.name).filter(Boolean);
+    const company = document.getElementById('company').value.trim();
+    const college = document.getElementById('college').value.trim();
+
+    const payload = {
+      name:                document.getElementById('name').value.trim(),
+      email:               document.getElementById('email').value.trim(),
+      phone:               document.getElementById('phone').value.trim(),
+      role:                state.who,
+      company:             company || college || null,
+      products_interested: selectedNames,
+      plan_type:           state.plan,
+      urgency:             state.urgency,
+      budget:              state.plan === 'paid' ? 'yes' : 'no',
+      goal:                state.goal,
+      notes:               document.getElementById('notes').value.trim(),
+    };
+
+    try {
+      const res    = await fetch('/api/leads', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      const result = await res.json();
+      if (result.success) showResult(result.lead, selectedNames);
+      else { err.textContent = result.error || 'Something went wrong'; err.style.display='block'; }
+    } catch {
+      err.textContent = 'Cannot reach server. Is it running? (node server.js)';
+      err.style.display = 'block';
+    }
+    btn.disabled = false; btn.textContent = 'Submit →';
+  }
+
+  function showResult(lead, selectedNames) {
+    document.getElementById('step3').style.display = 'none';
+    document.getElementById('resultDiv').style.display = 'block';
+    [1,2,3].forEach(i => document.getElementById('si-'+i).className='step done');
+
+    const s = lead.lead_status;
+    document.getElementById('resBadge').textContent = s==='HOT'?'🔥 HOT LEAD':s==='WARM'?'🟠 WARM LEAD':'🔵 COLD LEAD';
+    document.getElementById('resBadge').className = 'result-badge '+s;
+
+    const whoLabel = { student:'student', individual:'', freelancer:'freelancer', business:'team' };
+    const name = lead.name;
+
+    const titles = { HOT:`You're our top priority, ${name}!`, WARM:`Great to hear from you, ${name}!`, COLD:`Thanks for reaching out, ${name}!` };
+    const subs   = {
+      HOT: 'Our team will contact you within the hour.',
+      WARM:'Expect a personalised email from us shortly.',
+      COLD:'We\'ll send you helpful resources to get started.'
+    };
+    const actions = {
+      HOT:  { cls:'hot',  msg:'⚡ Our team has been alerted and will reach out to you immediately.' },
+      WARM: { cls:'warm', msg:'📧 A personalised email is on its way to your inbox.' },
+      COLD: { cls:'cold', msg:'📬 You\'ve been added to our welcome sequence. Check your inbox soon.' },
+    };
+
+    document.getElementById('resTitle').textContent = titles[s];
+    document.getElementById('resSub').textContent   = subs[s];
+    const ab = document.getElementById('resAction');
+    ab.textContent = actions[s].msg;
+    ab.className   = 'action-box '+actions[s].cls;
+
+    if (selectedNames.length) {
+      document.getElementById('resProducts').innerHTML =
+        '<strong>Products selected:</strong><br>' +
+        selectedNames.map(n=>`<span>${n}</span>`).join('');
+    }
+  }
+
+  function resetForm() {
+    state.who=''; state.plan=''; state.urgency=''; state.goal=''; state.products.clear();
+    document.querySelectorAll('input,select,textarea').forEach(el=>el.value='');
+    document.querySelectorAll('.who-card,.product-card,.plan-btn,.pill').forEach(el=>el.classList.remove('selected'));
+    document.getElementById('companyField').style.display='none';
+    document.getElementById('collegeField').style.display='none';
+    document.getElementById('resultDiv').style.display='none';
+    goStep(1);
+  }
+</script>
+</body>
+</html>
