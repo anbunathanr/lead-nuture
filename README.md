@@ -1,81 +1,95 @@
-# Lead Nurturing Automation Project
+# Lead Nurturing Automation
 
-Automated lead scoring and nurturing system using CRM Lead API data, n8n workflows, PostgreSQL, and Metabase dashboard.
+Automated lead scoring and nurturing system. Fetches leads from Frappe CRM, scores them (HOT/WARM/COLD), dispatches multi-channel alerts via n8n, stores data in PostgreSQL, and writes status back to the CRM.
 
 ## Architecture
 
 ```
-CRM Lead API (Frappe) → n8n Workflow → Lead Classification → Alerts (Email/Slack/WhatsApp/Telegram) → CRM Status Update → Metabase Dashboard
+Frappe CRM API → n8n Workflow → Lead Classification → Alerts (Slack/Telegram/Email/WhatsApp/SMS) → CRM Status Update
+                     ↕
+              Express API (server.js)
+                     ↕
+                PostgreSQL
 ```
+
+## Stack
+
+- **n8n** — workflow automation (cron, CRM fetch, classify, notify, CRM write-back)
+- **Express + Node.js** — REST API for manual triggers and web form ingestion
+- **PostgreSQL** — lead and follow-up storage
+- **Frappe CRM** — lead source at `http://34.196.221.16:8000`
+- **Metabase** — analytics dashboard (via Docker)
 
 ## Quick Start
 
-### 1. Install Dependencies
 ```bash
-npm install n8n -g
-```
+# 1. Install dependencies
+npm install
 
-### 2. Setup Database
-```bash
-# Install PostgreSQL, then run:
+# 2. Copy and fill in credentials
+cp .env.example .env
+
+# 3. Set up the database
 psql -U postgres -f database/setup.sql
-```
 
-### 3. Start n8n
-```bash
+# 4. Start the Express server
+npm start
+
+# 5. Start n8n (separate terminal)
 n8n start
+# Open http://localhost:5678 and import workflows/lead-nurturing-workflow.json
+
+# 6. Start Metabase (optional)
+docker-compose up -d metabase
 ```
-Open http://localhost:5678
 
-### 4. Import Workflow
-- Open n8n
-- Import `workflows/lead-nurturing-workflow.json`
-- Configure credentials (SMTP, Slack, Telegram, Twilio)
-- Set environment variable `CRM_SID` in n8n for API auth
+## Environment Variables
 
-### 5. CRM API Configuration
+See `.env.example` for all required variables. Key ones:
 
-The workflow fetches leads from:
+| Variable | Purpose |
+|---|---|
+| `CRM_BASE_URL` | Frappe CRM base URL, e.g. `http://34.196.221.16:8000` |
+| `CRM_SID` | Frappe session cookie for API auth |
+| `DB_*` | PostgreSQL connection settings |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram bot credentials |
+| `SMTP_*` / `GMAIL_*` | Email credentials |
+| `TWILIO_*` | WhatsApp / SMS via Twilio |
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/leads` | Submit a lead via web form |
+| `GET` | `/api/leads` | List all leads |
+| `GET` | `/api/stats` | HOT/WARM/COLD counts |
+| `GET` | `/api/followups` | Pending follow-ups |
+| `PATCH` | `/api/leads/:id/status` | Update lead status |
+| `POST` | `/api/crm/sync` | Manually trigger CRM poll |
+| `GET` | `/api/crm/health` | Check CRM connectivity |
+
+## Running Tests
 
 ```bash
-http://34.196.221.16:8000/api/resource/CRM Lead
+npm test
 ```
-
-Request details:
-
-- Query param `fields=["name","email","mobile_no","status","organization"]`
-- Header `Cookie: sid=<your session id>`
-
-### 6. Setup Dashboard
-```bash
-docker run -d -p 3000:3000 metabase/metabase
-```
-Open http://localhost:3000
 
 ## Project Structure
 
 ```
-├── database/           # PostgreSQL setup scripts
-├── workflows/          # n8n workflow JSON
-├── dashboard/          # Metabase queries
-├── docs/              # Documentation
-└── sample-data/       # Sample CRM data
+├── server.js                          # Express API
+├── notifications.js                   # Follow-up scheduler + dispatch stub
+├── crm.js                             # CRM polling, mapping, scoring (task 2+)
+├── database/setup.sql                 # PostgreSQL schema
+├── workflows/
+│   ├── lead-nurturing-workflow.json   # n8n workflow (import this)
+│   └── lead-scoring-function.js      # Scoring logic reference for n8n
+├── public/                            # Web form + dashboard HTML
+├── sample-data/crm_leads.csv          # Sample CRM data for testing
+├── dashboard/metabase-queries.md      # Metabase SQL queries
+├── tests/
+│   ├── crm.unit.test.js               # Unit tests
+│   └── crm.pbt.test.js                # Property-based tests
+└── .kiro/specs/crm-integration/       # Feature spec (requirements, design, tasks)
 ```
-
-## Features
-
-- ✅ Automated lead scoring (HOT/WARM/COLD)
-- ✅ Real-time Slack alerts for hot leads
-- ✅ Email nurturing for warm leads
-- ✅ PostgreSQL data storage
-- ✅ Analytics dashboard
-- ✅ Scheduled automation (every 5 minutes)
-
-## Demo Flow
-
-1. CRM lead is created/updated in Frappe
-2. Cron trigger runs every 5 minutes in n8n
-3. Lead is mapped and classified (HOT/WARM/COLD)
-4. Alerts/messages are sent based on lead status
-5. CRM lead status is updated back via API
-6. Dashboard updates in real-time

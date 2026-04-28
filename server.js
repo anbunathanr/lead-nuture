@@ -4,6 +4,7 @@ const { Pool } = require('pg');
 const cors     = require('cors');
 const path     = require('path');
 const { dispatchAlerts, processDueFollowups } = require('./notifications');
+const { pollCrmLeads, checkCrmHealth } = require('./crm');
 
 const app = express();
 app.use(cors());
@@ -154,13 +155,38 @@ app.patch('/api/leads/:id/status', async (req, res) => {
   }
 });
 
+// ── CRM Routes ────────────────────────────────────────────
+
+app.post('/api/crm/sync', async (req, res) => {
+  if (!process.env.CRM_BASE_URL || !process.env.CRM_SID) {
+    return res.status(503).json({ error: 'CRM not configured' });
+  }
+  try {
+    const result = await pollCrmLeads(pool);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/crm/health', async (req, res) => {
+  const health = await checkCrmHealth();
+  if (health.ok) {
+    res.json({ status: 'ok', crm: health.crm });
+  } else {
+    res.status(503).json({ status: 'error', message: health.message });
+  }
+});
+
 // ── Follow-up Cron (every 5 minutes) ─────────────────────
 setInterval(() => {
   processDueFollowups(pool).catch(console.error);
+  pollCrmLeads(pool).catch(console.error);
 }, 5 * 60 * 1000);
 
 // Run once on startup too
 processDueFollowups(pool).catch(console.error);
+pollCrmLeads(pool).catch(console.error);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
