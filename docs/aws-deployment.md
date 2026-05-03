@@ -1,97 +1,134 @@
 # AWS Serverless Deployment
 
+Uses only free-tier eligible, serverless AWS services:
+**Lambda · API Gateway · S3 · CloudFront · SSM Parameter Store**
+
 ## Architecture
 
 ```
-Browser → CloudFront → S3 (index.html)
-                ↓
-         API Gateway → Lambda (handler.js) → Frappe CRM
+Browser
+  │
+  ├── Static dashboard ──► CloudFront ──► S3 (public/index.html)
+  │
+  └── API calls ──► API Gateway ──► Lambda (lambda/handler.js)
+                                         │
+                                         └──► Frappe CRM
 ```
-
-## Components
-
-| Component | Purpose | Cost |
-|-----------|---------|------|
-| **S3** | Hosts `public/index.html` | ~$0.01/month |
-| **CloudFront** | CDN for dashboard | ~$0/month (free tier) |
-| **API Gateway** | Routes `/api/crm/*` to Lambda | ~$0/month (free tier) |
-| **Lambda** | Fetches CRM data | ~$0/month (free tier) |
 
 ---
 
-## Step 1 — Deploy Lambda
+## Step 1 — Store credentials in SSM Parameter Store
+
+In AWS Console → Systems Manager → Parameter Store → Create parameter:
+
+| Parameter Name | Value |
+|----------------|-------|
+| `/leadflow/CRM_BASE_URL` | `http://your-frappe-host:8000` |
+| `/leadflow/CRM_USER` | your Frappe email |
+| `/leadflow/CRM_PASSWORD` | your Frappe password |
+
+Use **SecureString** type for USER and PASSWORD.
+
+---
+
+## Step 2 — Deploy Lambda
 
 1. Zip the Lambda code:
 ```bash
 zip -r lambda.zip lambda/handler.js crm.js
 ```
 
-2. In AWS Console → Lambda → Create function:
-   - Runtime: Node.js 18.x
+2. AWS Console → Lambda → Create function:
+   - Runtime: **Node.js 18.x**
    - Upload `lambda.zip`
    - Handler: `lambda/handler.handler`
+   - Timeout: 30 seconds
+   - Memory: 128 MB
 
-3. Set environment variables in Lambda:
-   - `CRM_BASE_URL` = `http://34.196.221.16:8000`
-   - `CRM_USER` = your Frappe email
-   - `CRM_PASSWORD` = your Frappe password
+3. Add environment variables in Lambda configuration:
+   - `CRM_BASE_URL` — or fetch from SSM (see handler.js comments)
+   - `CRM_USER`
+   - `CRM_PASSWORD`
+
+4. Add Lambda execution role permission:
+   - `ssm:GetParameter` on `/leadflow/*`
 
 ---
 
-## Step 2 — Set up API Gateway
+## Step 3 — Set up API Gateway
 
-1. Create HTTP API in API Gateway
+1. Create **HTTP API** (not REST API — cheaper)
 2. Add routes:
    - `GET /api/crm/leads` → Lambda
    - `GET /api/crm/health` → Lambda
-3. Enable CORS
-4. Deploy → note the API URL (e.g. `https://abc123.execute-api.us-east-1.amazonaws.com`)
+3. Enable CORS (allow origin `*`)
+4. Deploy → note the invoke URL:
+   `https://abc123.execute-api.us-east-1.amazonaws.com`
 
 ---
 
-## Step 3 — Deploy Dashboard to S3
+## Step 4 — Deploy Dashboard to S3
 
-1. Update `public/index.html` — change the fetch URL:
+1. Update `public/index.html` — change the API fetch URL:
 ```js
-// Replace:
+// Find this line and replace with your API Gateway URL:
 const res = await fetch('/api/crm/leads');
-// With your API Gateway URL:
+// Change to:
 const res = await fetch('https://abc123.execute-api.us-east-1.amazonaws.com/api/crm/leads');
 ```
 
-2. Create S3 bucket → enable static website hosting
+2. Create S3 bucket:
+   - Enable **Static website hosting**
+   - Uncheck "Block all public access"
+   - Add bucket policy:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::YOUR-BUCKET-NAME/*"
+  }]
+}
+```
+
 3. Upload `public/index.html`
-4. Set bucket policy to public read
 
 ---
 
-## Step 4 — CloudFront (optional but recommended)
+## Step 5 — CloudFront (HTTPS + CDN)
 
-1. Create CloudFront distribution pointing to S3 bucket
-2. Add custom domain if needed
-3. Enable HTTPS
+1. Create CloudFront distribution:
+   - Origin: your S3 bucket website endpoint
+   - Default root object: `index.html`
+   - Redirect HTTP to HTTPS
+2. Your dashboard is now live at `https://xxxxx.cloudfront.net`
+
+---
+
+## Estimated Cost
+
+All within AWS free tier for typical usage:
+
+| Service | Free Tier | Typical Usage |
+|---------|-----------|---------------|
+| Lambda | 1M requests/month | ~8,640 requests/month (every 5 min) |
+| API Gateway | 1M requests/month | Same as Lambda |
+| S3 | 5GB storage | < 1MB |
+| CloudFront | 1TB transfer/month | Minimal |
+| SSM | 10,000 API calls/month | Minimal |
+
+**Estimated monthly cost: $0** (within free tier)
 
 ---
 
 ## Local Development
 
-Still works as before:
+No AWS needed for local dev:
+
 ```bash
 npm install
-npm start
-# Dashboard at http://localhost:3001
-```
-
----
-
-## Security (recommended)
-
-Store CRM credentials in **AWS Secrets Manager** instead of Lambda env vars:
-
-```js
-// In lambda/handler.js, replace process.env with:
-const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
-const client = new SecretsManagerClient({ region: 'us-east-1' });
-const secret = await client.send(new GetSecretValueCommand({ SecretId: 'crm-credentials' }));
-const { CRM_USER, CRM_PASSWORD, CRM_BASE_URL } = JSON.parse(secret.SecretString);
+cp .env.example .env   # fill in CRM credentials
+npm start              # http://localhost:3001
 ```

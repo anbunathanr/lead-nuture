@@ -1,26 +1,36 @@
-# Lead Nurturing Automation
+# Lead Nurturing Automation — Digitrans Solutions
 
-Automated lead scoring and nurturing system. Fetches leads from Frappe CRM, scores them (HOT/WARM/COLD), dispatches multi-channel alerts via n8n, stores data in PostgreSQL, and writes status back to the CRM.
+Automated CRM lead outreach system. Every 5 minutes, fetches new leads from Frappe CRM, sends personalised messages via Slack, Telegram, Email, WhatsApp, and SMS, then marks them as Contacted. A live analytics dashboard shows outreach progress.
 
 ## Architecture
 
 ```
-Frappe CRM API → n8n Workflow → Lead Classification → Alerts (Slack/Telegram/Email/WhatsApp/SMS) → CRM Status Update
-                     ↕
-              Express API (server.js)
-                     ↕
-                PostgreSQL
+Frappe CRM
+    │
+    ▼
+n8n Workflow (every 5 min)
+    ├── Login to CRM (fresh session)
+    ├── Fetch leads where status = New (2 per run)
+    ├── Validate email
+    ├── Send alerts → Slack · Telegram · Email · WhatsApp · SMS
+    └── Mark lead as Contacted in CRM
+
+Express Server (local) / AWS Lambda (production)
+    └── GET /api/crm/leads  →  Analytics Dashboard (S3/CloudFront)
 ```
 
 ## Stack
 
-- **n8n** — workflow automation (cron, CRM fetch, classify, notify, CRM write-back)
-- **Express + Node.js** — REST API for manual triggers and web form ingestion
-- **PostgreSQL** — lead and follow-up storage
-- **Frappe CRM** — lead source at `http://34.196.221.16:8000`
-- **Metabase** — analytics dashboard (via Docker)
+| Layer | Technology |
+|-------|-----------|
+| Workflow automation | n8n (company-hosted) |
+| CRM | Frappe CRM |
+| Alerts | Slack · Telegram · Gmail SMTP · Twilio WhatsApp/SMS |
+| Dashboard API | Express (local) / AWS Lambda + API Gateway (production) |
+| Dashboard UI | Static HTML → S3 + CloudFront |
+| Secrets | `.env` (local) / AWS SSM Parameter Store (production) |
 
-## Quick Start
+## Quick Start (Local)
 
 ```bash
 # 1. Install dependencies
@@ -29,45 +39,86 @@ npm install
 # 2. Copy and fill in credentials
 cp .env.example .env
 
-# 3. Set up the database
-psql -U postgres -f database/setup.sql
-
-# 4. Start the Express server
+# 3. Start the dashboard server
 npm start
-
-# 5. Start n8n (separate terminal)
-n8n start
-# Open http://localhost:5678 and import workflows/lead-nurturing-workflow.json
-
-# 6. Start Metabase (optional)
-docker-compose up -d metabase
+# Dashboard → http://localhost:3001
 ```
+
+## n8n Workflow Setup
+
+The workflow runs on your company's n8n instance — no local n8n needed.
+
+1. Open your company n8n
+2. Import `workflows/lead-nurturing-workflow.json`
+3. Replace all `{{PLACEHOLDER}}` values with real credentials (see table below)
+4. Set up credentials in n8n for Telegram, SMTP, and Twilio Basic Auth
+5. Activate the workflow
+
+### Placeholders in workflow JSON
+
+| Placeholder | What to replace with |
+|-------------|---------------------|
+| `{{CRM_HOST}}` | `your-frappe-host:8000` |
+| `{{CRM_USER}}` | Frappe login email |
+| `{{CRM_PASSWORD}}` | Frappe login password |
+| `{{SLACK_WEBHOOK_PATH}}` | `T.../B.../xxx` (from Slack webhook URL) |
+| `{{TELEGRAM_CHAT_ID}}` | Your Telegram chat ID |
+| `{{TWILIO_ACCOUNT_SID}}` | Twilio Account SID |
+| `{{SMTP_FROM_EMAIL}}` | Sender email address |
 
 ## Environment Variables
 
-See `.env.example` for all required variables. Key ones:
+Copy `.env.example` to `.env` and fill in:
 
-| Variable | Purpose |
-|---|---|
-| `CRM_BASE_URL` | Frappe CRM base URL, e.g. `http://34.196.221.16:8000` |
-| `CRM_SID` | Frappe session cookie for API auth |
-| `DB_*` | PostgreSQL connection settings |
-| `SLACK_WEBHOOK_URL` | Slack incoming webhook |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram bot credentials |
-| `SMTP_*` / `GMAIL_*` | Email credentials |
-| `TWILIO_*` | WhatsApp / SMS via Twilio |
+```bash
+cp .env.example .env
+```
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `CRM_BASE_URL` | ✅ | Frappe CRM base URL |
+| `CRM_USER` | ✅ | Frappe login email |
+| `CRM_PASSWORD` | ✅ | Frappe login password |
+| `PORT` | optional | Server port (default: 3001) |
 
 ## API Endpoints
 
 | Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/leads` | Submit a lead via web form |
-| `GET` | `/api/leads` | List all leads |
-| `GET` | `/api/stats` | HOT/WARM/COLD counts |
-| `GET` | `/api/followups` | Pending follow-ups |
-| `PATCH` | `/api/leads/:id/status` | Update lead status |
-| `POST` | `/api/crm/sync` | Manually trigger CRM poll |
-| `GET` | `/api/crm/health` | Check CRM connectivity |
+|--------|------|-------------|
+| `GET` | `/api/crm/leads` | Live lead stats + full lead list for dashboard |
+| `GET` | `/api/crm/health` | CRM connectivity check |
+
+## CRM Lead Statuses
+
+| Status | Set by | Meaning |
+|--------|--------|---------|
+| `New` | CRM / manual | Not yet contacted — workflow picks these up |
+| `Contacted` | n8n (automatic) | Initial message sent |
+| `Nurture` | Sales team | Replied but not ready |
+| `Qualified` | Sales team | Wants a demo/call |
+| `Unqualified` | Sales team | Not a good fit |
+| `Junk` | Sales team | Spam or invalid |
+
+## Project Structure
+
+```
+├── server.js                        # Local dev server (Express)
+├── crm.js                           # Frappe CRM client (session, fetch, stats)
+├── lambda/
+│   └── handler.js                   # AWS Lambda handler (production)
+├── workflows/
+│   └── lead-nurturing-workflow.json # n8n workflow (import into company n8n)
+├── public/
+│   └── index.html                   # Analytics dashboard
+├── docs/
+│   └── aws-deployment.md            # AWS serverless deployment guide
+├── tests/
+│   ├── crm.unit.test.js             # Unit tests
+│   ├── crm.routes.test.js           # Route tests
+│   └── crm.pbt.test.js              # Property-based tests
+├── .env.example                     # Environment variable template
+└── .gitignore
+```
 
 ## Running Tests
 
@@ -75,21 +126,20 @@ See `.env.example` for all required variables. Key ones:
 npm test
 ```
 
-## Project Structure
+## Production Deployment (AWS Serverless)
+
+Uses only free-tier eligible services: **Lambda · API Gateway · S3 · CloudFront · SSM**
+
+See [`docs/aws-deployment.md`](docs/aws-deployment.md) for step-by-step instructions.
 
 ```
-├── server.js                          # Express API
-├── notifications.js                   # Follow-up scheduler + dispatch stub
-├── crm.js                             # CRM polling, mapping, scoring (task 2+)
-├── database/setup.sql                 # PostgreSQL schema
-├── workflows/
-│   ├── lead-nurturing-workflow.json   # n8n workflow (import this)
-│   └── lead-scoring-function.js      # Scoring logic reference for n8n
-├── public/                            # Web form + dashboard HTML
-├── sample-data/crm_leads.csv          # Sample CRM data for testing
-├── dashboard/metabase-queries.md      # Metabase SQL queries
-├── tests/
-│   ├── crm.unit.test.js               # Unit tests
-│   └── crm.pbt.test.js                # Property-based tests
-└── .kiro/specs/crm-integration/       # Feature spec (requirements, design, tasks)
+Browser → CloudFront → S3 (index.html)
+                ↓
+         API Gateway → Lambda → Frappe CRM
 ```
+
+## Security
+
+- Never commit `.env` — it's in `.gitignore`
+- The workflow JSON uses `{{PLACEHOLDER}}` values — fill them in n8n directly, not in the file
+- For production, store credentials in AWS SSM Parameter Store instead of environment variables
