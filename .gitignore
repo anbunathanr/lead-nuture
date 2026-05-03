@@ -2,7 +2,7 @@
 node_modules/
 package-lock.json
 
-# Environment variables
+# Environment variables — NEVER commit these
 .env
 .env.local
 .env.*.local
@@ -14,12 +14,11 @@ package-lock.json
 *.p12
 *.crt
 
-# n8n
+# n8n local instance data
 .n8n/
 
-# Database
-*.db
-*.sqlite
+# n8n workflow exports (contain credentials — keep out of git)
+# workflows/lead-nurturing-workflow.json
 
 # Logs
 logs/
@@ -30,10 +29,6 @@ logs/
 Thumbs.db
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
-
-# Metabase
-metabase.db/
