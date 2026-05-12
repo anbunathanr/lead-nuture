@@ -1,7 +1,7 @@
 {
-  "name": "lead-nurturing-automation",
+  "name": "nurturio",
   "version": "2.0.0",
-  "description": "CRM lead analytics dashboard + AWS Lambda API",
+  "description": "Nurturio — AI-powered lead nurturing SaaS",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -10,8 +10,12 @@
     "deploy": "cd lambda && zip -r ../lambda.zip . ../crm.js && echo 'Upload lambda.zip to AWS Lambda'"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "1.4.7",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.4"
   },
   "devDependencies": {
     "fast-check": "^4.7.0",

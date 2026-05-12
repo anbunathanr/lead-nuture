@@ -19,6 +19,21 @@ package-lock.json
 
 # n8n workflow exports (contain credentials — keep out of git)
 # workflows/lead-nurturing-workflow.json
+workflows/lead-nurturing-workflow.json
+workflows/email-reply-workflow.json
+workflows/telegram-bot-workflow.json
+
+# Tenant config and data (contain secrets and crawled content)
+data/tenant-config.json
+data/knowledge-base.json
+data/nudge-schedule.json
+data/replied-emails.json
+
+# Customer data (contain credentials — never commit)
+data/customers/
+
+# Personal credentials reference (never commit)
+docs/my-credentials.md
 
 # Logs
 logs/
