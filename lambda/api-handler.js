@@ -1,4 +1,4 @@
-﻿/**
+/**
  * lambda/api-handler.js
  * Main API Lambda — handles all HTTP routes via API Gateway.
  * Replaces server.js for production AWS deployment.
@@ -80,7 +80,17 @@ async function createSession(email) {
   return token;
 }
 
-async function getSessionEmail(cookieHeader) {
+async function getSessionEmail(cookieHeader, authHeader) {
+  // Check Authorization: Bearer <token> header first (for S3-hosted frontend)
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    try {
+      const r = await dynamo.send(new GetCommand({ TableName: SESSIONS_TABLE, Key: { token } }));
+      if (!r.Item || r.Item.expires < Math.floor(Date.now() / 1000) || r.Item.isAdmin) return null;
+      return r.Item.email;
+    } catch { return null; }
+  }
+  // Fall back to cookie
   const cookies = parseCookies(cookieHeader);
   const token   = cookies.customer_token;
   if (!token) return null;
@@ -194,7 +204,11 @@ async function handleCustomerRegister(body) {
     kb_trained: false,
   };
   await dynamo.send(new PutCommand({ TableName: CUSTOMERS_TABLE, Item: item }));
-  return ok({ success: true, company_name });
+  const token = await createSession(email);
+  return ok(
+    { success: true, company_name, token },
+    { 'Set-Cookie': setCookieHeader('customer_token', token) }
+  );
 }
 
 async function handleCustomerLogin(body, ip) {
@@ -212,8 +226,9 @@ async function handleCustomerLogin(body, ip) {
   if (!valid) return err('Invalid password', 401);
 
   const token = await createSession(email);
+  // Return token in body AND cookie so both S3-hosted and server-hosted frontends work
   return ok(
-    { success: true, company_name: r.Item.company_name },
+    { success: true, company_name: r.Item.company_name, token },
     { 'Set-Cookie': setCookieHeader('customer_token', token) }
   );
 }
@@ -226,8 +241,8 @@ async function handleCustomerLogout(cookieHeader) {
   return ok({ ok: true }, { 'Set-Cookie': 'customer_token=; Max-Age=0; Path=/' });
 }
 
-async function handleGetProfile(email, cookieHeader) {
-  const sessionEmail = await getSessionEmail(cookieHeader);
+async function handleGetProfile(email, cookieHeader, authHeader = '') {
+  const sessionEmail = await getSessionEmail(cookieHeader, authHeader);
   if (!sessionEmail || sessionEmail.toLowerCase() !== email.toLowerCase()) return err('Unauthorized', 401);
 
   const r = await dynamo.send(new GetCommand({ TableName: CUSTOMERS_TABLE, Key: { email } }));
@@ -237,11 +252,11 @@ async function handleGetProfile(email, cookieHeader) {
   return ok(safe);
 }
 
-async function handleUpdateProfile(body, cookieHeader) {
+async function handleUpdateProfile(body, cookieHeader, authHeader = '') {
   const { email, ...updates } = body;
   if (!email) return err('email required', 400);
 
-  const sessionEmail = await getSessionEmail(cookieHeader);
+  const sessionEmail = await getSessionEmail(cookieHeader, authHeader);
   if (!sessionEmail || sessionEmail.toLowerCase() !== email.toLowerCase()) return err('Unauthorized', 401);
 
   delete updates.password_hash;
@@ -267,10 +282,10 @@ async function handleUpdateProfile(body, cookieHeader) {
   return ok({ success: true });
 }
 
-async function handleKBTrain(body, cookieHeader) {
+async function handleKBTrain(body, cookieHeader, authHeader = '') {
   const { company_url, company_name, description, email } = body;
   if (email) {
-    const sessionEmail = await getSessionEmail(cookieHeader);
+    const sessionEmail = await getSessionEmail(cookieHeader, authHeader);
     if (!sessionEmail || sessionEmail.toLowerCase() !== email.toLowerCase()) return err('Unauthorized', 401);
   }
   if (!company_url) return err('company_url required', 400);
@@ -312,11 +327,11 @@ async function handleKBTrain(body, cookieHeader) {
   return ok({ success: true, kb_chunks: allChunks.length, page_count: 1 });
 }
 
-async function handleKBManual(body, cookieHeader) {
+async function handleKBManual(body, cookieHeader, authHeader = '') {
   const { text, email } = body;
   if (!text) return err('text required', 400);
   if (email) {
-    const sessionEmail = await getSessionEmail(cookieHeader);
+    const sessionEmail = await getSessionEmail(cookieHeader, authHeader);
     if (!sessionEmail || sessionEmail.toLowerCase() !== email.toLowerCase()) return err('Unauthorized', 401);
   }
 
@@ -339,9 +354,9 @@ async function handleKBManual(body, cookieHeader) {
   return ok({ success: true, kb_chunks: existing.chunks.length });
 }
 
-async function handleKBGet(email, cookieHeader) {
+async function handleKBGet(email, cookieHeader, authHeader = '') {
   if (email) {
-    const sessionEmail = await getSessionEmail(cookieHeader);
+    const sessionEmail = await getSessionEmail(cookieHeader, authHeader);
     if (!sessionEmail || sessionEmail.toLowerCase() !== email.toLowerCase()) return err('Unauthorized', 401);
   }
   const kb = email ? await loadKB(email) : null;
@@ -546,13 +561,13 @@ exports.handler = async (event) => {
     if (method === 'POST' && path === '/api/customer/register') return await handleCustomerRegister(parsed);
     if (method === 'POST' && path === '/api/customer/login')    return await handleCustomerLogin(parsed, ip);
     if (method === 'POST' && path === '/api/customer/logout')   return await handleCustomerLogout(cookies);
-    if (method === 'GET'  && path === '/api/customer/profile')  return await handleGetProfile(qs.email, cookies);
-    if (method === 'PUT'  && path === '/api/customer/profile')  return await handleUpdateProfile(parsed, cookies);
+    if (method === 'GET'  && path === '/api/customer/profile')  return await handleGetProfile(qs.email, cookies, authHeader);
+    if (method === 'PUT'  && path === '/api/customer/profile')  return await handleUpdateProfile(parsed, cookies, authHeader);
 
     // Knowledge base
-    if (method === 'POST'   && path === '/api/kb/train')  return await handleKBTrain(parsed, cookies);
-    if (method === 'POST'   && path === '/api/kb/manual') return await handleKBManual(parsed, cookies);
-    if (method === 'GET'    && path === '/api/kb')        return await handleKBGet(qs.email, cookies);
+    if (method === 'POST'   && path === '/api/kb/train')  return await handleKBTrain(parsed, cookies, authHeader);
+    if (method === 'POST'   && path === '/api/kb/manual') return await handleKBManual(parsed, cookies, authHeader);
+    if (method === 'GET'    && path === '/api/kb')        return await handleKBGet(qs.email, cookies, authHeader);
     if (method === 'GET'    && path === '/api/kb/text')   return await handleKBText(qs.email);
 
     // AI

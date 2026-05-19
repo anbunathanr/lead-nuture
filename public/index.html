@@ -113,6 +113,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
       sessionStorage.setItem('nurturio_user', JSON.stringify({ email, company_name: data.company_name }));
+      if (data.token) localStorage.setItem('nurturio_customer_token', data.token);
       window.location.href = '/dashboard.html';
     } catch (e) { showError(e.message); }
     setLoading('login-btn', false);
@@ -133,6 +134,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Registration failed');
       sessionStorage.setItem('nurturio_user', JSON.stringify({ email, company_name: data.company_name }));
+      if (data.token) localStorage.setItem('nurturio_customer_token', data.token);
       window.location.href = '/dashboard.html';
     } catch (e) { showError(e.message); }
     setLoading('signup-btn', false);

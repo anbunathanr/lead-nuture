@@ -144,9 +144,18 @@ function App() {
     loadProfile(u.email);
   }, []);
 
+  function authHeaders() {
+    const token = localStorage.getItem('nurturio_customer_token');
+    const h = { 'Content-Type': 'application/json' };
+    if (token) h['Authorization'] = 'Bearer ' + token;
+    return h;
+  }
+
   async function loadProfile(email) {
     try {
-      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile?email=' + encodeURIComponent(email));
+      const token = localStorage.getItem('nurturio_customer_token');
+      const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile?email=' + encodeURIComponent(email), { headers });
       if (!res.ok) return;
       const data = await res.json();
       setProfile(data);
