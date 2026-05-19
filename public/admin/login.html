@@ -28,15 +28,21 @@
   <div class="err" id="err">Incorrect password</div>
 </div>
 <script>
+  const API = 'https://1pqeziijq3.execute-api.us-east-1.amazonaws.com';
+
   async function login() {
     const pwd = document.getElementById('pwd').value;
-    const res = await fetch('/api/admin/login', {
+    const res = await fetch(API + '/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: pwd })
     });
-    if (res.ok) {
-      window.location.href = '/admin/dashboard.html';
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      // Store token in localStorage for cross-origin S3 deployment
+      localStorage.setItem('nurturio_admin_token', data.token || 'authenticated');
+      localStorage.setItem('nurturio_admin_password', pwd);
+      window.location.href = 'dashboard.html';
     } else {
       document.getElementById('err').style.display = 'block';
     }

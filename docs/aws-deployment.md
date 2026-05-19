@@ -1,109 +1,80 @@
-# AWS Serverless Deployment
+# Nurturio — AWS Serverless Deployment
 
-Uses only free-tier eligible, serverless AWS services:
-**Lambda · API Gateway · S3 · CloudFront · SSM Parameter Store**
+**Services used:** Lambda · API Gateway · DynamoDB · S3 · CloudFront · SSM · EventBridge · Bedrock
+
+**NOT used (too expensive):** EC2, RDS, VPC, NAT Gateway, Load Balancers, ECS, OpenSearch
+
+---
 
 ## Architecture
 
 ```
 Browser
   │
-  ├── Static dashboard ──► CloudFront ──► S3 (public/index.html)
+  ├── Static pages (index.html, dashboard.html, chatbot-widget.html)
+  │   └── CloudFront → S3 (nurturio-static bucket)
   │
-  └── API calls ──► API Gateway ──► Lambda (lambda/handler.js)
-                                         │
-                                         └──► Frappe CRM
+  └── API calls (/api/*)
+      └── CloudFront → API Gateway → Lambda (api-handler.js)
+                                          │
+                                          ├── DynamoDB (customers, sessions, nudge)
+                                          ├── S3 (knowledge base files)
+                                          ├── Bedrock (Claude Haiku 4.5)
+                                          └── SSM (secrets)
+
+EventBridge (every 5 min) → Lambda (imap-poller.js)
+                                  │
+                                  ├── DynamoDB (read customer IMAP configs)
+                                  ├── S3 (load KB)
+                                  ├── Bedrock (generate reply)
+                                  └── SMTP (send reply)
 ```
 
 ---
 
-## Step 1 — Store credentials in SSM Parameter Store
+## Prerequisites
 
-In AWS Console → Systems Manager → Parameter Store → Create parameter:
-
-| Parameter Name | Value |
-|----------------|-------|
-| `/leadflow/CRM_BASE_URL` | `http://your-frappe-host:8000` |
-| `/leadflow/CRM_USER` | your Frappe email |
-| `/leadflow/CRM_PASSWORD` | your Frappe password |
-
-Use **SecureString** type for USER and PASSWORD.
+1. **AWS CLI** installed and configured: `aws configure`
+2. **SAM CLI** installed: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html
+3. **Node.js 18+** installed
+4. AWS account with Bedrock access to Claude Haiku 4.5 (`us.anthropic.claude-haiku-4-5-20251001-v1:0`)
 
 ---
 
-## Step 2 — Deploy Lambda
+## Deploy in 3 commands
 
-1. Zip the Lambda code:
 ```bash
-zip -r lambda.zip lambda/handler.js crm.js
+# 1. Set your secrets as environment variables
+export ADMIN_PASSWORD="your-strong-admin-password"
+export LEAD_BOT_TOKEN="your-telegram-bot-token"   # optional
+export AWS_REGION="us-east-1"
+
+# 2. Make deploy script executable
+chmod +x scripts/deploy.sh
+
+# 3. Deploy everything
+./scripts/deploy.sh
 ```
 
-2. AWS Console → Lambda → Create function:
-   - Runtime: **Node.js 18.x**
-   - Upload `lambda.zip`
-   - Handler: `lambda/handler.handler`
-   - Timeout: 30 seconds
-   - Memory: 128 MB
-
-3. Add environment variables in Lambda configuration:
-   - `CRM_BASE_URL` — or fetch from SSM (see handler.js comments)
-   - `CRM_USER`
-   - `CRM_PASSWORD`
-
-4. Add Lambda execution role permission:
-   - `ssm:GetParameter` on `/leadflow/*`
+The script will output your app URL when done.
 
 ---
 
-## Step 3 — Set up API Gateway
+## What gets created
 
-1. Create **HTTP API** (not REST API — cheaper)
-2. Add routes:
-   - `GET /api/crm/leads` → Lambda
-   - `GET /api/crm/health` → Lambda
-3. Enable CORS (allow origin `*`)
-4. Deploy → note the invoke URL:
-   `https://abc123.execute-api.us-east-1.amazonaws.com`
-
----
-
-## Step 4 — Deploy Dashboard to S3
-
-1. Update `public/index.html` — change the API fetch URL:
-```js
-// Find this line and replace with your API Gateway URL:
-const res = await fetch('/api/crm/leads');
-// Change to:
-const res = await fetch('https://abc123.execute-api.us-east-1.amazonaws.com/api/crm/leads');
-```
-
-2. Create S3 bucket:
-   - Enable **Static website hosting**
-   - Uncheck "Block all public access"
-   - Add bucket policy:
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Principal": "*",
-    "Action": "s3:GetObject",
-    "Resource": "arn:aws:s3:::YOUR-BUCKET-NAME/*"
-  }]
-}
-```
-
-3. Upload `public/index.html`
-
----
-
-## Step 5 — CloudFront (HTTPS + CDN)
-
-1. Create CloudFront distribution:
-   - Origin: your S3 bucket website endpoint
-   - Default root object: `index.html`
-   - Redirect HTTP to HTTPS
-2. Your dashboard is now live at `https://xxxxx.cloudfront.net`
+| Resource | Name | Purpose |
+|----------|------|---------|
+| Lambda | `nurturio-api-prod` | All API routes |
+| Lambda | `nurturio-imap-poller-prod` | Email reply automation |
+| API Gateway | `nurturio-api-prod` | HTTP API |
+| DynamoDB | `nurturio-customers-prod` | Customer profiles |
+| DynamoDB | `nurturio-sessions-prod` | Auth sessions + replied emails |
+| DynamoDB | `nurturio-nudge-prod` | Nudge schedules |
+| S3 | `nurturio-kb-{accountId}-prod` | Knowledge base files |
+| S3 | `nurturio-static-{accountId}-prod` | Static HTML pages |
+| CloudFront | auto | CDN + HTTPS |
+| EventBridge | `nurturio-imap-schedule-prod` | 5-min IMAP trigger |
+| SSM | `/nurturio/*` | Secrets |
 
 ---
 
@@ -113,22 +84,41 @@ All within AWS free tier for typical usage:
 
 | Service | Free Tier | Typical Usage |
 |---------|-----------|---------------|
-| Lambda | 1M requests/month | ~8,640 requests/month (every 5 min) |
-| API Gateway | 1M requests/month | Same as Lambda |
-| S3 | 5GB storage | < 1MB |
-| CloudFront | 1TB transfer/month | Minimal |
-| SSM | 10,000 API calls/month | Minimal |
+| Lambda | 1M requests/month | ~10K requests/month |
+| API Gateway | 1M requests/month | ~10K requests/month |
+| DynamoDB | 25GB + 25 WCU/RCU | < 1GB, minimal throughput |
+| S3 | 5GB + 20K requests | < 100MB |
+| CloudFront | 1TB transfer | Minimal |
+| EventBridge | 14M events/month | ~8,640/month |
+| Bedrock | Pay per token | ~$0.25/1K emails |
 
-**Estimated monthly cost: $0** (within free tier)
+**Estimated monthly cost: ~$0–5** depending on Bedrock usage.
+
+---
+
+## After deployment
+
+### Update n8n workflows
+Replace `https://stricken-unpledged-aorta.ngrok-free.dev` with your CloudFront URL in:
+- `workflows/lead-nurturing-workflow.json`
+- `workflows/email-reply-workflow.json`
+
+### Add customer IMAP config
+For the IMAP poller to work, customers need `imap_host`, `imap_user`, `imap_pass` in their profile. Add these fields to the dashboard profile form.
+
+### Tear down
+```bash
+aws cloudformation delete-stack --stack-name nurturio --region us-east-1
+```
 
 ---
 
 ## Local Development
 
-No AWS needed for local dev:
+Keep using `server.js` locally — it's still fully functional:
 
 ```bash
 npm install
-cp .env.example .env   # fill in CRM credentials
-npm start              # http://localhost:3001
+cp .env.example .env   # fill in your values
+npm start              # http://localhost:8080
 ```

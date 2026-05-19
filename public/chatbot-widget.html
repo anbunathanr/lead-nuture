@@ -201,7 +201,7 @@
 
   // Set company name in header (will be updated from API if available)
   if (companyEmail) {
-    fetch('/api/customer/profile?email=' + encodeURIComponent(companyEmail))
+    fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile?email=' + encodeURIComponent(companyEmail))
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data && data.company_name) {
@@ -275,7 +275,7 @@
     showTyping();
 
     try {
-      const res = await fetch('/api/chat/widget', {
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/chat/widget', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text, sessionId, companyEmail }),

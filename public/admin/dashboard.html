@@ -134,13 +134,26 @@
 <div class="toast" id="toast"></div>
 
 <script>
-  /* ── Auth check — verify with server, not client cookie ── */
+  const API = 'https://1pqeziijq3.execute-api.us-east-1.amazonaws.com';
+
+  // Get stored admin token from localStorage
+  function getAuthHeaders() {
+    const token = localStorage.getItem('nurturio_admin_token');
+    return token ? { 'Authorization': 'Bearer ' + token } : {};
+  }
+
+  /* ── Auth check ── */
   (async function checkAuth() {
+    const token = localStorage.getItem('nurturio_admin_token');
+    if (!token) { window.location.href = 'login.html'; return; }
     try {
-      const res = await fetch('/api/admin/customers?limit=0');
-      if (res.status === 401) window.location.href = '/admin/login.html';
+      const res = await fetch(API + '/api/admin/customers', { headers: getAuthHeaders() });
+      if (res.status === 401) {
+        localStorage.removeItem('nurturio_admin_token');
+        window.location.href = 'login.html';
+      }
     } catch {
-      window.location.href = '/admin/login.html';
+      window.location.href = 'login.html';
     }
   })();
 
@@ -155,8 +168,8 @@
       </div>`;
 
     try {
-      const res = await fetch('/api/admin/customers');
-      if (res.status === 401) { window.location.href = '/admin/login.html'; return; }
+      const res = await fetch(API + '/api/admin/customers', { headers: getAuthHeaders() });
+      if (res.status === 401) { localStorage.removeItem('nurturio_admin_token'); window.location.href = 'login.html'; return; }
       if (!res.ok) throw new Error('Failed to load customers');
       const data = await res.json();
       allCustomers = data.customers || [];
@@ -288,8 +301,8 @@
     btn.disabled = true;
     btn.textContent = '⏳ …';
     try {
-      const res = await fetch('/api/admin/customers/' + emailEnc + '/workflow?type=' + type);
-      if (res.status === 401) { window.location.href = '/admin/login.html'; return; }
+      const res = await fetch(API + '/api/admin/customers/' + emailEnc + '/workflow?type=' + type, { headers: getAuthHeaders() });
+      if (res.status === 401) { localStorage.removeItem('nurturio_admin_token'); window.location.href = 'login.html'; return; }
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || 'Download failed');
@@ -311,8 +324,9 @@
 
   /* ── Logout ── */
   async function logout() {
-    await fetch('/api/admin/logout', { method: 'POST' }).catch(() => {});
-    window.location.href = '/admin/login.html';
+    await fetch(API + '/api/admin/logout', { method: 'POST', headers: getAuthHeaders() }).catch(() => {});
+    localStorage.removeItem('nurturio_admin_token');
+    window.location.href = 'login.html';
   }
 
   /* ── Toast ── */

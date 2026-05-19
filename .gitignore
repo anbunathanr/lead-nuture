@@ -17,8 +17,12 @@ package-lock.json
 # n8n local instance data
 .n8n/
 
-# n8n workflow exports (contain credentials — keep out of git)
-# workflows/lead-nurturing-workflow.json
+# SAM build artifacts
+.aws-sam/
+
+# Lambda copied files (generated during deploy)
+lambda/bedrock-client.js
+lambda/workflow-template.json
 workflows/lead-nurturing-workflow.json
 workflows/email-reply-workflow.json
 workflows/telegram-bot-workflow.json

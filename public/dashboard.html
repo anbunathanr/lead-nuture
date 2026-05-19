@@ -146,7 +146,7 @@ function App() {
 
   async function loadProfile(email) {
     try {
-      const res = await fetch('/api/customer/profile?email=' + encodeURIComponent(email));
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile?email=' + encodeURIComponent(email));
       if (!res.ok) return;
       const data = await res.json();
       setProfile(data);
@@ -161,7 +161,7 @@ function App() {
   async function saveProfile() {
     setSaving(true);
     try {
-      const res = await fetch('/api/customer/profile', {
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, email: user.email }),
@@ -178,7 +178,7 @@ function App() {
     if (!form.company_url) { showToast('Enter your website URL first', 'error'); return; }
     setKbLoading(true);
     try {
-      const res = await fetch('/api/kb/train', {
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb/train', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company_url: form.company_url, company_name: form.company_name, email: user.email }),
       });
@@ -186,7 +186,7 @@ function App() {
       if (!res.ok) throw new Error(data.error || 'Training failed');
       setKbTrained(true);
       // Save kb_trained flag to profile
-      await fetch('/api/customer/profile', {
+      await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
       });
@@ -200,7 +200,7 @@ function App() {
     setManualLoading(true);
     setManualResult(null);
     try {
-      const res = await fetch('/api/kb/manual', {
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb/manual', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: manualText, email: user.email }),
       });
@@ -209,7 +209,7 @@ function App() {
       setKbTrained(true);
       setManualResult({ success: true, chunks: data.kb_chunks });
       setManualText('');
-      await fetch('/api/customer/profile', {
+      await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
       });
@@ -228,13 +228,13 @@ function App() {
       const formData = new FormData();
       formData.append('file', uploadFile);
       formData.append('email', user.email);
-      const res = await fetch('/api/kb/upload', { method: 'POST', body: formData });
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
       setKbTrained(true);
       setUploadResult({ success: true, filename: data.filename, chunks: data.kb_chunks });
       // Save kb_trained flag to profile
-      await fetch('/api/customer/profile', {
+      await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
       });
@@ -247,7 +247,7 @@ function App() {
   }
 
   function logout() {
-    fetch('/api/customer/logout', { method: 'POST' }).catch(() => {});
+    fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/logout', { method: 'POST' }).catch(() => {});
     sessionStorage.removeItem('nurturio_user');
     window.location.href = '/index.html';
   }
