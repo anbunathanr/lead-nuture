@@ -72,8 +72,8 @@ function Toast({ msg, type, onDone }) {
 /* ── Profile completion calculator ── */
 function calcCompletion(p) {
   const fields = [
-    { key: 'company_name',   label: 'Company name',    weight: 15 },
-    { key: 'company_url',    label: 'Website URL',      weight: 15 },
+    { key: 'company_name',   label: 'Company name',    weight: 10 },
+    { key: 'company_url',    label: 'Website URL',      weight: 10 },
     { key: 'booking_url',    label: 'Booking URL',      weight: 10 },
     { key: 'crm_base_url',   label: 'CRM URL',          weight: 20 },
     { key: 'crm_user',       label: 'CRM username',     weight: 10 },
@@ -82,8 +82,7 @@ function calcCompletion(p) {
     { key: 'smtp_pass',      label: 'SMTP password',    weight: 10 },
     { key: 'kb_trained',     label: 'Knowledge base trained', weight: 10 },
   ];
-  // Optional fields — shown as bonus but not counted
-  // slack_webhook, telegram_chat_id, telegram_bot_url
+  // Optional (alerts) — not counted toward 100%
   let total = 0, done = 0;
   const missing = [];
   for (const f of fields) {
@@ -172,7 +171,7 @@ function App() {
     try {
       const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ ...form, email: user.email }),
       });
       const data = await res.json();
@@ -188,7 +187,7 @@ function App() {
     setKbLoading(true);
     try {
       const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb/train', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders(),
         body: JSON.stringify({ company_url: form.company_url, company_name: form.company_name, email: user.email }),
       });
       const data = await res.json();
@@ -196,7 +195,7 @@ function App() {
       setKbTrained(true);
       // Save kb_trained flag to profile
       await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers: authHeaders(),
         body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
       });
       showToast(`Knowledge base trained — ${data.kb_chunks} chunks`, 'success');
@@ -210,7 +209,7 @@ function App() {
     setManualResult(null);
     try {
       const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb/manual', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders(),
         body: JSON.stringify({ text: manualText, email: user.email }),
       });
       const data = await res.json();
@@ -219,7 +218,7 @@ function App() {
       setManualResult({ success: true, chunks: data.kb_chunks });
       setManualText('');
       await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers: authHeaders(),
         body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
       });
       showToast(`Text added — ${data.kb_chunks} total chunks`, 'success');
@@ -244,7 +243,7 @@ function App() {
       setUploadResult({ success: true, filename: data.filename, chunks: data.kb_chunks });
       // Save kb_trained flag to profile
       await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers: authHeaders(),
         body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
       });
       showToast(`File uploaded — ${data.kb_chunks} chunks added`, 'success');
@@ -405,10 +404,15 @@ function App() {
 
           {tab === 'alerts' && (
             <div>
-              <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1.25rem' }}>🔔 Team Alerts</h2>
-              <Field label="Slack Webhook URL" value={form.slack_webhook} onChange={v => set('slack_webhook', v)} placeholder="https://hooks.slack.com/services/…"/>
-              <Field label="Telegram Chat ID" value={form.telegram_chat_id} onChange={v => set('telegram_chat_id', v)} placeholder="7336265543" hint="Your personal Telegram chat ID for lead alerts"/>
-              <Field label="Telegram Bot URL (for leads)" value={form.telegram_bot_url} onChange={v => set('telegram_bot_url', v)} placeholder="https://t.me/your_bot" hint="Shared with leads so they can chat with your AI"/>
+              <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>🔔 Team Alerts</h2>
+              <p style={{ fontSize: '0.82rem', color: C.muted, marginBottom: '1.25rem' }}>
+                Get notified on Slack and Telegram when new leads come in or reply to emails. All optional.
+              </p>
+              <Field label="Slack Webhook URL" value={form.slack_webhook} onChange={v => set('slack_webhook', v)} placeholder="https://hooks.slack.com/services/…" hint="Get alerts in your Slack channel"/>
+              <Field label="Telegram Chat ID" value={form.telegram_chat_id} onChange={v => set('telegram_chat_id', v)} placeholder="7336265543" hint="Your personal Telegram chat ID — get alerts on your phone"/>
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '0.85rem 1rem', marginBottom: '1rem', fontSize: '0.78rem', color: C.muted }}>
+                💡 To get your Telegram Chat ID: message <strong style={{ color: C.text }}>@userinfobot</strong> on Telegram — it will reply with your chat ID.
+              </div>
               <button onClick={saveProfile} disabled={saving} style={{
                 background: saving ? C.border : C.accent, color: '#fff', border: 'none',
                 padding: '0.7rem 1.5rem', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem', cursor: saving ? 'not-allowed' : 'pointer',

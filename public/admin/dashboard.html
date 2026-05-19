@@ -231,9 +231,10 @@
 
   function calcPct(c) {
     const fields = ['company_name','company_url','booking_url','crm_base_url','crm_user','crm_password','smtp_user','smtp_pass'];
-    const weights = [15,15,10,20,10,10,10,10];
+    const weights = [10,10,10,20,10,10,10,10]; // = 90, + 10 for kb_trained = 100
     let done = 0;
-    fields.forEach((f,i) => { if (c[f] && c[f] !== '••••••••') done += weights[i]; });
+    // For admin view: passwords are redacted as ••••••••, but if they exist at all count them
+    fields.forEach((f,i) => { if (c[f] && String(c[f]).trim()) done += weights[i]; });
     if (c.kb_trained) done += 10;
     return Math.min(100, done);
   }
@@ -285,9 +286,6 @@
           </button>
           <button class="dl-btn" onclick="downloadWorkflow('${emailEnc}', 'email-reply', this)" title="Email AI Reply workflow" style="background:#0f4c81;color:#93c5fd">
             ⬇️ Email Reply
-          </button>
-          <button class="dl-btn" onclick="downloadWorkflow('${emailEnc}', 'telegram-bot', this)" title="Telegram Bot workflow" style="background:#064e3b;color:#34d399">
-            ⬇️ Telegram Bot
           </button>
           <button class="dl-btn" onclick="window.open('/chatbot-widget.html?company=' + '${emailEnc}', '_blank')" title="Test chatbot for this company" style="background:#1e1b4b;color:#a5b4fc;border:1px solid #4f46e5">
             💬 Chat Test
