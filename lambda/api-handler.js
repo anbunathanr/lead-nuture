@@ -474,218 +474,147 @@ async function handleAdminWorkflow(email, type, cookieHeader, authHeader = '') {
   if (!await getAdminSession(cookieHeader, authHeader)) return err('Unauthorized', 401);
   const r = await dynamo.send(new GetCommand({ TableName: CUSTOMERS_TABLE, Key: { email } }));
   if (!r.Item) return err('Customer not found', 404);
-
   const c = r.Item;
   const kb = await loadKB(email);
-  // Get KB text safely — escape for use inside JSON strings
   const kbChunks = (kb?.chunks || []).map(ch => ch.text).join('\n\n').slice(0, 3000);
-  // Escape for embedding in JSON string values
   const kbSafe = kbChunks.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '').replace(/\t/g, '\\t');
 
-  const crmHost = (c.crm_base_url || 'http://your-crm:8000').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const crmUrl  = (c.crm_base_url || 'http://your-crm:8000').replace(/\/$/, '');
+  const crmHost = crmUrl.replace(/^https?:\/\//, '');
   const apiUrl  = 'https://1pqeziijq3.execute-api.us-east-1.amazonaws.com';
+  const co      = c.company_name || 'Company';
+  const coTeam  = co + ' Team';
+  const bookUrl = c.booking_url  || '';
+  const webUrl  = c.company_url  || '';
+  const slackWh = c.slack_webhook || 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK';
+  const tgChat  = c.telegram_chat_id || '0';
+  const smtpFrom = c.smtp_user || '';
+  const f2sKey  = process.env.FAST2SMS_API_KEY || 'YOUR_FAST2SMS_API_KEY';
+  const SID     = "={{ 'sid=' + $('Extract Session ID').first().json.session_id }}";
 
   let wf;
 
   if (type === 'lead-nurturing') {
+    // ── LEAD NURTURING — current version with separate email nodes, Fast2SMS, correct CRM URL ──
     wf = {
-      name: `${c.company_name || 'Company'} — Lead Nurturing`,
+      name: `${co} — Lead Nurturing`,
       nodes: [
-        {
-          parameters: { triggerTimes: { item: [{ mode: 'everyX', value: 5, unit: 'minutes' }] } },
-          id: 'node-cron', name: 'Cron Trigger (Every 5m)',
-          type: 'n8n-nodes-base.cron', typeVersion: 1, position: [-2400, -208]
-        },
-        {
-          parameters: {
-            method: 'POST', url: `http://${crmHost}/api/method/login`,
-            sendHeaders: true,
-            headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Accept', value: 'application/json' }] },
-            sendBody: true, specifyBody: 'json',
-            jsonBody: `={ "usr": "${c.crm_user || ''}", "pwd": "${(c.crm_password || '').replace(/"/g, '\\"')}" }`,
-            options: { response: { response: { fullResponse: true } } }
-          },
-          id: 'node-login', name: 'Login to CRM', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-2176, -208]
-        },
-        {
-          parameters: { jsCode: "const headers = $input.first().json.headers || {};\nconst setCookie = Array.isArray(headers['set-cookie']) ? headers['set-cookie'].join(', ') : (headers['set-cookie'] || '');\nconst match = setCookie.match(/sid=([^;,]+)/);\nconst sid = match ? match[1] : '';\nif (!sid) throw new Error('Login failed');\nreturn [{ json: { session_id: sid } }];" },
-          id: 'node-session', name: 'Extract Session ID', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-1952, -208]
-        },
-        {
-          parameters: {
-            url: `http://${crmHost}/api/resource/CRM Lead`,
-            sendQuery: true,
-            queryParameters: { parameters: [
-              { name: 'fields', value: '["name","lead_name","first_name","email","mobile_no","status","organization","source"]' },
-              { name: 'filters', value: '[["status","=","New"]]' },
-              { name: 'limit', value: String(c.leads_per_run || '2') }
-            ]},
-            sendHeaders: true,
-            headerParameters: { parameters: [{ name: 'Cookie', value: "={{ 'sid=' + $('Extract Session ID').first().json.session_id }}" }] },
-            options: {}
-          },
-          id: 'node-fetch', name: 'Fetch CRM Leads', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-1728, -208]
-        },
-        {
-          parameters: { jsCode: "const rows = $input.first().json.data || [];\nfunction isValidEmail(e) { return e && /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(e); }\nreturn rows.map(item => {\n  const email = (item.email || '').trim();\n  const phone = (item.mobile_no || '').trim();\n  let p = phone.replace(/[^\\d]/g, '');\n  let phone_normalized = p.length === 10 ? '+91' + p : (phone.startsWith('+') ? '+' + p : '+' + p);\n  return { json: { id: item.name, name: item.lead_name || item.first_name || item.name, email, phone_normalized, company: (item.organization || '').trim(), has_email: isValidEmail(email) } };\n});" },
-          id: 'node-split', name: 'Split Into Individual Leads', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-1504, -208]
-        },
-        {
-          parameters: {
-            method: 'POST', url: `${apiUrl}/api/ai/chat`,
-            sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] },
-            sendBody: true, specifyBody: 'json',
-            jsonBody: `={{ JSON.stringify({ systemPrompt: 'You are a warm sales assistant for ${c.company_name || 'our company'}. Write a personalized nurture email for a lead.\\n\\nRULES:\\n- If the lead has a product/org field, write specifically about that product\\n- If no product, introduce all products briefly\\n- Keep under 150 words\\n- NEVER mention pricing\\n- End with:\\n  📅 Book a call: ${c.booking_url || ''}\\n  🌐 ${c.company_url || ''}\\n- Sign off as: ${c.company_name || 'our company'} Team\\n- Write ONLY the email body\\n\\nKNOWLEDGE BASE:\\n${kbSafe}', userMessage: 'Lead: ' + $json.name + '\\nProduct/Org: ' + ($json.company || 'not specified') + '\\n\\nWrite the email:', maxTokens: 350 }) }}`,
-            options: {}
-          },
-          id: 'node-ai', name: 'Bedrock AI — Generate Email', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-1280, -208]
-        },
-        {
-          parameters: { jsCode: `const r = $input.first().json;\nconst aiBody = r.text?.trim();\nconst lead = $('Split Into Individual Leads').first().json;\nconst name = lead.name;\nconst company = lead.company;\nconst emailBody = aiBody || 'Hi ' + name + ',\\n\\nThanks for connecting with ${(c.company_name || 'us').replace(/'/g, "\\'")}!\\n\\n📅 ${c.booking_url || ''}\\n🌐 ${c.company_url || ''}\\n\\nBest regards,\\n${(c.company_name || 'Team').replace(/'/g, "\\'")} Team';\nconst subject = company ? name + ', your ' + company + ' trial — next steps 🚀' : 'Welcome to ${(c.company_name || 'us').replace(/'/g, "\\'")} 🚀';\nreturn [{ json: { ...lead, subject, emailBody, is_targeted: !!company } }];` },
-          id: 'node-build', name: 'Build Email', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-1060, -208]
-        },
-        {
-          parameters: {
-            conditions: { options: { caseSensitive: true, typeValidation: 'strict', version: 1 },
-              conditions: [{ id: 'valid-email', leftValue: '={{ $json.has_email }}', rightValue: true, operator: { type: 'boolean', operation: 'equals' } }],
-              combinator: 'and' }, options: {}
-          },
-          id: 'node-check-email', name: 'Has Valid Email?', type: 'n8n-nodes-base.if', typeVersion: 2, position: [-840, -208]
-        },
-        {
-          parameters: {
-            method: 'POST', url: c.slack_webhook || 'https://hooks.slack.com/services/YOUR/WEBHOOK',
-            sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] },
-            sendBody: true, specifyBody: 'json',
-            jsonBody: "={{ JSON.stringify({ text: ($json.is_targeted ? '🎯 *Targeted Lead — ' + $json.company + '*' : '📋 *New Lead*') + '\\n👤 ' + $json.name + '\\n📧 ' + $json.email + '\\n\\n✉️ Email sent.' }) }}",
-            options: {}
-          },
-          id: 'node-slack', name: 'Slack Alert', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-600, -400],
-          onError: 'continueRegularOutput'
-        },
-        {
-          parameters: {
-            chatId: c.telegram_chat_id || '0',
-            text: "={{ ($json.is_targeted ? '🎯 ' + $json.company : '📋 New Lead') + '\\n👤 ' + $json.name + '\\n📧 ' + $json.email + '\\n✉️ Email sent ✓' }}",
-            additionalFields: {}
-          },
-          id: 'node-tg', name: 'Telegram Alert', type: 'n8n-nodes-base.telegram', typeVersion: 1, position: [-600, -240],
-          credentials: { telegramApi: { id: '', name: 'Telegram — set up in n8n credentials' } }
-        },
-        {
-          parameters: {
-            fromEmail: c.smtp_user || '',
-            toEmail: '={{ $json.email }}',
-            subject: '={{ $json.subject }}',
-            text: '={{ $json.emailBody }}',
-            options: {}
-          },
-          id: 'node-email', name: 'Send Email', type: 'n8n-nodes-base.emailSend', typeVersion: 2, position: [-600, -80],
-          credentials: { smtp: { id: '', name: 'SMTP — set up in n8n credentials' } }
-        },
-        {
-          parameters: {
-            method: 'PUT', url: `=http://${crmHost}/api/resource/CRM Lead/{{ $json.id }}`,
-            sendHeaders: true,
-            headerParameters: { parameters: [{ name: 'Cookie', value: "={{ 'sid=' + $('Extract Session ID').first().json.session_id }}" }, { name: 'Content-Type', value: 'application/json' }] },
-            sendBody: true, specifyBody: 'json', jsonBody: '={ "status": "Contacted" }', options: {}
-          },
-          id: 'node-contacted', name: 'Mark as Contacted', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-360, -208],
-          retryOnFail: true, waitBetweenTries: 2000, onError: 'continueRegularOutput'
-        },
-        {
-          parameters: {
-            method: 'PUT', url: `=http://${crmHost}/api/resource/CRM Lead/{{ $json.id }}`,
-            sendHeaders: true,
-            headerParameters: { parameters: [{ name: 'Cookie', value: "={{ 'sid=' + $('Extract Session ID').first().json.session_id }}" }, { name: 'Content-Type', value: 'application/json' }] },
-            sendBody: true, specifyBody: 'json', jsonBody: '={ "status": "Junk" }', options: {}
-          },
-          id: 'node-junk', name: 'Mark as Junk', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-360, 100],
-          retryOnFail: true, waitBetweenTries: 2000, onError: 'continueRegularOutput'
-        }
+        { parameters: { triggerTimes: { item: [{ mode: 'everyX', value: 5, unit: 'minutes' }] } }, id: 'node-cron', name: 'Cron Trigger (Every 5m)', type: 'n8n-nodes-base.cron', typeVersion: 1, position: [-2400, -208] },
+        { parameters: { method: 'POST', url: `${crmUrl}/api/method/login`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Accept', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: `={ "usr": "${c.crm_user || ''}", "pwd": "${(c.crm_password || '').replace(/"/g, '\\"')}" }`, options: { response: { response: { fullResponse: true } } } }, id: 'node-login', name: 'Login to CRM', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-2176, -208] },
+        { parameters: { jsCode: "const headers=$input.first().json.headers||{};const setCookie=Array.isArray(headers['set-cookie'])?headers['set-cookie'].join(', '):(headers['set-cookie']||'');const match=setCookie.match(/sid=([^;,]+)/);const sid=match?match[1]:'';if(!sid)throw new Error('Login failed');return[{json:{session_id:sid}}];" }, id: 'node-session', name: 'Extract Session ID', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-1952, -208] },
+        { parameters: { url: `${crmUrl}/api/resource/CRM Lead`, sendQuery: true, queryParameters: { parameters: [{ name: 'fields', value: '["name","lead_name","first_name","email","mobile_no","status","organization","source"]' }, { name: 'filters', value: '[["status","=","New"]]' }, { name: 'limit', value: '1' }] }, sendHeaders: true, headerParameters: { parameters: [{ name: 'Cookie', value: SID }] }, options: {} }, id: 'node-fetch', name: 'Fetch CRM Leads', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-1728, -208] },
+        { parameters: { jsCode: "const rows=$input.first().json.data||[];function isValidEmail(e){return e&&/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(e)&&!/^(noreply|no-reply|donotreply|mailer|postmaster|bounce|admin)@/i.test(e);}return rows.map(item=>{const email=(item.email||'').trim();const phone=(item.mobile_no||'').trim();const digits=phone.replace(/[^\\d]/g,'');let phone_10digit='';if(digits.length===10)phone_10digit=digits;else if(digits.length===12&&digits.startsWith('91'))phone_10digit=digits.slice(2);else if(digits.length===11&&digits.startsWith('0'))phone_10digit=digits.slice(1);const company=(item.organization||'').replace(/\\n/g,'').trim();const name=item.lead_name||item.first_name||item.name;return{json:{id:item.name,name,email,phone_10digit,company,has_email:isValidEmail(email),has_phone:phone_10digit.length===10}};});" }, id: 'node-split', name: 'Split Into Individual Leads', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-1504, -208] },
+        { parameters: { method: 'POST', url: slackWh, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: `={{ JSON.stringify({ text: ($json.company ? '🎯 *Targeted Lead — ' + $json.company + '*' : '📋 *New Lead*') + '\\n👤 ' + $json.name + '\\n📧 ' + ($json.email||'No email') + '\\n📱 ' + ($json.phone_10digit?'+91'+$json.phone_10digit:'No phone') + '\\n🏢 ' + ($json.company||'Not specified') + '\\n' + ($json.has_email?'✉️ Email sending...':'⚠️ No valid email.') + ($json.has_phone?' 📲 SMS sending...':'') }) }}`, options: {} }, id: 'node-slack', name: 'Slack Alert', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-1280, -500], onError: 'continueRegularOutput' },
+        { parameters: { chatId: tgChat, text: `={{ ($json.company ? '🎯 *Targeted Lead — ' + $json.company + '*' : '📋 *New Lead*') + '\\n👤 ' + $json.name + '\\n📧 ' + ($json.email||'No email') + '\\n📱 ' + ($json.phone_10digit?'+91'+$json.phone_10digit:'No phone') + '\\n🏢 ' + ($json.company||'Not specified') + '\\n' + ($json.has_email?'✉️ Email sending...':'⚠️ No valid email.') + ($json.has_phone?' 📲 SMS sending...':'') }}`, additionalFields: { parse_mode: 'Markdown' } }, id: 'node-tg', name: 'Telegram Alert', type: 'n8n-nodes-base.telegram', typeVersion: 1, position: [-1280, -320], credentials: { telegramApi: { id: '', name: 'Telegram — set up in n8n credentials' } } },
+        { parameters: { conditions: { options: { caseSensitive: true, typeValidation: 'strict', version: 1 }, conditions: [{ id: 'c1', leftValue: '={{ $json.has_email }}', rightValue: true, operator: { type: 'boolean', operation: 'equals' } }], combinator: 'and' }, options: {} }, id: 'node-has-email', name: 'Has Valid Email?', type: 'n8n-nodes-base.if', typeVersion: 2, position: [-1280, -140] },
+        { parameters: { conditions: { options: { caseSensitive: false, typeValidation: 'strict', version: 1 }, conditions: [{ id: 'c2', leftValue: '={{ $json.company }}', rightValue: '', operator: { type: 'string', operation: 'notEquals' } }], combinator: 'and' }, options: {} }, id: 'node-has-company', name: 'Has Company?', type: 'n8n-nodes-base.if', typeVersion: 2, position: [-1060, -140] },
+        { parameters: { url: `${apiUrl}/api/kb/text?email=${encodeURIComponent(email)}`, options: {} }, id: 'node-kb-p', name: 'Load KB (Personalized)', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-840, -60] },
+        { parameters: { jsCode: `const kb=$input.first().json;const lead=$('Has Company?').first().json;return[{json:{...lead,kbText:kb.kbText||'${co} builds products. Website: ${webUrl}'}}];` }, id: 'node-merge-p', name: 'Merge KB (Personalized)', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-620, -60] },
+        { parameters: { method: 'POST', url: `${apiUrl}/api/ai/chat`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: `={{ JSON.stringify({ systemPrompt: 'You are a warm sales assistant for ${co}. A lead used one of our products. Write a nurture email.\\\\nRULES:\\\\n- Write specifically about the product they used\\\\n- Under 150 words\\\\n- NEVER mention pricing\\\\n- End with:\\\\nBook a call: ${bookUrl}\\\\n${webUrl}\\\\n- Sign off as: ${coTeam}\\\\n- Write ONLY the email body\\\\n\\\\nKNOWLEDGE BASE:\\\\n' + $json.kbText, userMessage: 'Lead: ' + $json.name + '\\\\nProduct: ' + $json.company + '\\\\nWrite the email:', maxTokens: 350 }) }}` }, id: 'node-ai-p', name: 'AI — Personalized Email', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-380, -60] },
+        { parameters: { jsCode: `const r=$input.first().json;const lead=$('Merge KB (Personalized)').first().json;const ai=r.text?.trim()||'';const emailBody=ai||'Hi '+lead.name+',\\\\n\\\\nThanks for trying '+lead.company+'!\\\\n\\\\nBook a call: ${bookUrl}\\\\n${webUrl}\\\\n\\\\nBest regards,\\\\n${coTeam}';const subject=lead.name+', your '+lead.company+' trial — next steps 🚀';const smsText=('Hi '+lead.name+', re: '+lead.company+'. Book a call: ${bookUrl} | ${webUrl}').slice(0,160);return[{json:{...lead,subject,emailBody,smsText,is_targeted:true}}];` }, id: 'node-build-p', name: 'Build Personalized Email', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-140, -60] },
+        { parameters: { url: `${apiUrl}/api/kb/text?email=${encodeURIComponent(email)}`, options: {} }, id: 'node-kb-g', name: 'Load KB (Generic)', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-840, -280] },
+        { parameters: { jsCode: `const kb=$input.first().json;const lead=$('Has Company?').first().json;return[{json:{...lead,kbText:kb.kbText||'${co} builds products. Website: ${webUrl}'}}];` }, id: 'node-merge-g', name: 'Merge KB (Generic)', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-620, -280] },
+        { parameters: { method: 'POST', url: `${apiUrl}/api/ai/chat`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: `={{ JSON.stringify({ systemPrompt: 'You are a warm sales assistant for ${co}. Write a welcome email to a new lead.\\\\nRULES:\\\\n- 1 sentence intro of ${co}\\\\n- List ALL products as bullets: name + one sentence\\\\n- Under 200 words\\\\n- NEVER mention pricing\\\\n- End with:\\\\nBook a call: ${bookUrl}\\\\n${webUrl}\\\\n- Sign off as: ${coTeam}\\\\n- Write ONLY the email body\\\\n\\\\nKNOWLEDGE BASE:\\\\n' + $json.kbText, userMessage: 'Lead: ' + $json.name + '\\\\nWrite the welcome email:', maxTokens: 400 }) }}` }, id: 'node-ai-g', name: 'AI — Generic Email', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-380, -280] },
+        { parameters: { jsCode: `const r=$input.first().json;const lead=$('Merge KB (Generic)').first().json;const ai=r.text?.trim()||'';const emailBody=ai||'Hi '+lead.name+',\\\\n\\\\nWelcome to ${co}!\\\\n\\\\nBook a call: ${bookUrl}\\\\n${webUrl}\\\\n\\\\nBest regards,\\\\n${coTeam}';const subject='Welcome to ${co}, '+lead.name+' 🚀';const smsText=('Hi '+lead.name+', welcome to ${co}! Book a call: ${bookUrl} | ${webUrl}').slice(0,160);return[{json:{...lead,subject,emailBody,smsText,is_targeted:false}}];` }, id: 'node-build-g', name: 'Build Generic Email', type: 'n8n-nodes-base.code', typeVersion: 2, position: [-140, -280] },
+        { parameters: { fromEmail: smtpFrom, toEmail: '={{ $json.email }}', subject: '={{ $json.subject }}', text: '={{ $json.emailBody }}', options: {} }, id: 'node-send-p', name: 'Send Email (Personalized)', type: 'n8n-nodes-base.emailSend', typeVersion: 2, position: [100, -60], credentials: { smtp: { id: '', name: 'SMTP — set up in n8n credentials' } } },
+        { parameters: { fromEmail: smtpFrom, toEmail: '={{ $json.email }}', subject: '={{ $json.subject }}', text: '={{ $json.emailBody }}', options: {} }, id: 'node-send-g', name: 'Send Email (Generic)', type: 'n8n-nodes-base.emailSend', typeVersion: 2, position: [100, -280], credentials: { smtp: { id: '', name: 'SMTP — set up in n8n credentials' } } },
+        { parameters: { conditions: { options: { caseSensitive: true, typeValidation: 'strict', version: 1 }, conditions: [{ id: 'hp1', leftValue: '={{ $json.has_phone }}', rightValue: true, operator: { type: 'boolean', operation: 'equals' } }], combinator: 'and' }, options: {} }, id: 'node-phone-p', name: 'Has Phone? (Personalized)', type: 'n8n-nodes-base.if', typeVersion: 2, position: [320, -60] },
+        { parameters: { conditions: { options: { caseSensitive: true, typeValidation: 'strict', version: 1 }, conditions: [{ id: 'hp2', leftValue: '={{ $json.has_phone }}', rightValue: true, operator: { type: 'boolean', operation: 'equals' } }], combinator: 'and' }, options: {} }, id: 'node-phone-g', name: 'Has Phone? (Generic)', type: 'n8n-nodes-base.if', typeVersion: 2, position: [320, -280] },
+        { parameters: { url: 'https://www.fast2sms.com/dev/bulkV2', sendQuery: true, queryParameters: { parameters: [{ name: 'authorization', value: f2sKey }, { name: 'sender_id', value: 'FSTSMS' }, { name: 'message', value: '={{ $json.smsText }}' }, { name: 'language', value: 'english' }, { name: 'route', value: 'q' }, { name: 'numbers', value: '={{ $json.phone_10digit }}' }] }, options: {}, method: 'GET' }, id: 'node-sms-p', name: 'Fast2SMS (Personalized)', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [540, -60], onError: 'continueRegularOutput' },
+        { parameters: { url: 'https://www.fast2sms.com/dev/bulkV2', sendQuery: true, queryParameters: { parameters: [{ name: 'authorization', value: f2sKey }, { name: 'sender_id', value: 'FSTSMS' }, { name: 'message', value: '={{ $json.smsText }}' }, { name: 'language', value: 'english' }, { name: 'route', value: 'q' }, { name: 'numbers', value: '={{ $json.phone_10digit }}' }] }, options: {}, method: 'GET' }, id: 'node-sms-g', name: 'Fast2SMS (Generic)', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [540, -280], onError: 'continueRegularOutput' },
+        { parameters: { method: 'PUT', url: `={{ '${crmUrl}/api/resource/CRM Lead/' + $('Build Personalized Email').first().json.id }}`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Cookie', value: SID }, { name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: '={ "status": "Contacted" }', options: {} }, id: 'node-contacted-p', name: 'Mark Contacted (Personalized)', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [760, -60], retryOnFail: true, waitBetweenTries: 2000, onError: 'continueRegularOutput' },
+        { parameters: { method: 'PUT', url: `={{ '${crmUrl}/api/resource/CRM Lead/' + $('Build Generic Email').first().json.id }}`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Cookie', value: SID }, { name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: '={ "status": "Contacted" }', options: {} }, id: 'node-contacted-g', name: 'Mark Contacted (Generic)', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [760, -280], retryOnFail: true, waitBetweenTries: 2000, onError: 'continueRegularOutput' },
+        { parameters: { method: 'PUT', url: `={{ '${crmUrl}/api/resource/CRM Lead/' + $json.id }}`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Cookie', value: SID }, { name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: '={ "status": "Junk" }', options: {} }, id: 'node-junk', name: 'Mark as Junk', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [-1060, 60], retryOnFail: true, waitBetweenTries: 2000, onError: 'continueRegularOutput' }
       ],
       connections: {
         'Cron Trigger (Every 5m)': { main: [[{ node: 'Login to CRM', type: 'main', index: 0 }]] },
         'Login to CRM': { main: [[{ node: 'Extract Session ID', type: 'main', index: 0 }]] },
         'Extract Session ID': { main: [[{ node: 'Fetch CRM Leads', type: 'main', index: 0 }]] },
         'Fetch CRM Leads': { main: [[{ node: 'Split Into Individual Leads', type: 'main', index: 0 }]] },
-        'Split Into Individual Leads': { main: [[{ node: 'Bedrock AI — Generate Email', type: 'main', index: 0 }]] },
-        'Bedrock AI — Generate Email': { main: [[{ node: 'Build Email', type: 'main', index: 0 }]] },
-        'Build Email': { main: [[{ node: 'Has Valid Email?', type: 'main', index: 0 }]] },
-        'Has Valid Email?': {
-          main: [
-            [{ node: 'Slack Alert', type: 'main', index: 0 }, { node: 'Telegram Alert', type: 'main', index: 0 }, { node: 'Send Email', type: 'main', index: 0 }, { node: 'Mark as Contacted', type: 'main', index: 0 }],
-            [{ node: 'Mark as Junk', type: 'main', index: 0 }]
-          ]
-        }
+        'Split Into Individual Leads': { main: [[{ node: 'Slack Alert', type: 'main', index: 0 }, { node: 'Telegram Alert', type: 'main', index: 0 }, { node: 'Has Valid Email?', type: 'main', index: 0 }]] },
+        'Has Valid Email?': { main: [[{ node: 'Has Company?', type: 'main', index: 0 }], [{ node: 'Mark as Junk', type: 'main', index: 0 }]] },
+        'Has Company?': { main: [[{ node: 'Load KB (Personalized)', type: 'main', index: 0 }], [{ node: 'Load KB (Generic)', type: 'main', index: 0 }]] },
+        'Load KB (Personalized)': { main: [[{ node: 'Merge KB (Personalized)', type: 'main', index: 0 }]] },
+        'Merge KB (Personalized)': { main: [[{ node: 'AI — Personalized Email', type: 'main', index: 0 }]] },
+        'AI — Personalized Email': { main: [[{ node: 'Build Personalized Email', type: 'main', index: 0 }]] },
+        'Build Personalized Email': { main: [[{ node: 'Send Email (Personalized)', type: 'main', index: 0 }, { node: 'Has Phone? (Personalized)', type: 'main', index: 0 }]] },
+        'Send Email (Personalized)': { main: [[{ node: 'Mark Contacted (Personalized)', type: 'main', index: 0 }]] },
+        'Has Phone? (Personalized)': { main: [[{ node: 'Fast2SMS (Personalized)', type: 'main', index: 0 }], []] },
+        'Fast2SMS (Personalized)': { main: [[{ node: 'Mark Contacted (Personalized)', type: 'main', index: 0 }]] },
+        'Load KB (Generic)': { main: [[{ node: 'Merge KB (Generic)', type: 'main', index: 0 }]] },
+        'Merge KB (Generic)': { main: [[{ node: 'AI — Generic Email', type: 'main', index: 0 }]] },
+        'AI — Generic Email': { main: [[{ node: 'Build Generic Email', type: 'main', index: 0 }]] },
+        'Build Generic Email': { main: [[{ node: 'Send Email (Generic)', type: 'main', index: 0 }, { node: 'Has Phone? (Generic)', type: 'main', index: 0 }]] },
+        'Send Email (Generic)': { main: [[{ node: 'Mark Contacted (Generic)', type: 'main', index: 0 }]] },
+        'Has Phone? (Generic)': { main: [[{ node: 'Fast2SMS (Generic)', type: 'main', index: 0 }], []] },
+        'Fast2SMS (Generic)': { main: [[{ node: 'Mark Contacted (Generic)', type: 'main', index: 0 }]] }
       },
-      settings: { executionOrder: 'v1' }
+      active: false, settings: { executionOrder: 'v1' }
     };
   } else if (type === 'email-reply') {
     wf = {
-      name: `${c.company_name || 'Company'} — AI Email Reply`,
+      name: `${co} — AI Email Reply`,
       nodes: [
-        {
-          parameters: { triggerTimes: { item: [{ mode: 'everyX', value: 5, unit: 'minutes' }] } },
-          id: 'node-cron', name: 'Cron Trigger (Every 5m)', type: 'n8n-nodes-base.cron', typeVersion: 1, position: [0, 300]
-        },
-        {
-          parameters: { mailbox: 'INBOX', options: { allowUnauthorizedCerts: true, unseen: true } },
-          id: 'node-imap', name: 'Read Inbox (IMAP)', type: 'n8n-nodes-base.emailReadImap', typeVersion: 2, position: [220, 300],
-          credentials: { imap: { id: '', name: 'Gmail IMAP — set up in n8n credentials' } }
-        },
-        {
-          parameters: { jsCode: `const email = $input.first().json;\nconst inReplyTo = email.headerLines?.find(h => h.key === 'in-reply-to')?.line || '';\nconst messageId = email.headerLines?.find(h => h.key === 'message-id')?.line || '';\nconst fromHeader = email.from?.value?.[0] || {};\nconst fromEmail = fromHeader.address || '';\nconst fromName = fromHeader.name || fromEmail.split('@')[0] || 'there';\nconst subject = email.subject || '';\nconst body = email.text || email.html?.replace(/<[^>]+>/g, ' ') || '';\nconst ourEmail = '${c.smtp_user || ''}';\nconst isReply = !!inReplyTo || subject.toLowerCase().startsWith('re:');\nconst isOurOwn = fromEmail.toLowerCase() === ourEmail.toLowerCase();\nconst isAutoReply = /auto.?reply|out of office|vacation|noreply|no-reply/i.test(subject + fromEmail);\nif (!isReply || isOurOwn || isAutoReply || !fromEmail || !body.trim()) return [];\nreturn [{ json: { fromEmail, fromName, subject, body: body.slice(0, 1000), messageId, inReplyTo } }];` },
-          id: 'node-filter', name: 'Filter — Replies Only', type: 'n8n-nodes-base.code', typeVersion: 2, position: [440, 300]
-        },
-        {
-          parameters: {
-            method: 'POST', url: `${apiUrl}/api/ai/chat`,
-            sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] },
-            sendBody: true, specifyBody: 'json',
-            jsonBody: `={{ JSON.stringify({ systemPrompt: 'You are a helpful sales assistant for ${c.company_name || 'our company'}. Reply to this lead email warmly and professionally (under 120 words).\\nOnly answer questions about ${c.company_name || 'our company'}.\\nDo NOT mention pricing.\\nEnd with a call-to-action.\\nSign off as \\"${c.company_name || 'our company'} Team\\".\\n\\nWEBSITE: ${c.company_url || ''}\\nBOOK A CALL: ${c.booking_url || ''}\\n\\nKNOWLEDGE BASE:\\n${kbSafe}', userMessage: 'Lead: ' + $json.fromName + '\\nEmail: ' + $json.fromEmail + '\\n\\nTheir reply:\\n' + $json.body + '\\n\\nWrite a reply:', maxTokens: 300 }) }}`,
-            options: {}
-          },
-          id: 'node-ai', name: 'Bedrock AI — Generate Reply', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [660, 300]
-        },
-        {
-          parameters: { jsCode: `const r = $input.first().json;\nconst aiReply = r.text?.trim();\nconst lead = $('Filter — Replies Only').first().json;\nif (!aiReply) return [{ json: { ...lead, replyBody: 'Hi ' + lead.fromName + ',\\n\\nThank you for your reply! Our team will get back to you shortly.\\n\\n📅 ${c.booking_url || ''}\\n🌐 ${c.company_url || ''}\\n\\nBest regards,\\n${(c.company_name || 'Team').replace(/'/g, "\\'")} Team', replySubject: lead.subject.startsWith('Re:') ? lead.subject : 'Re: ' + lead.subject } }];\nreturn [{ json: { ...lead, replyBody: aiReply, replySubject: lead.subject.startsWith('Re:') ? lead.subject : 'Re: ' + lead.subject } }];` },
-          id: 'node-extract', name: 'Extract AI Reply', type: 'n8n-nodes-base.code', typeVersion: 2, position: [880, 300]
-        },
-        {
-          parameters: {
-            fromEmail: c.smtp_user || '',
-            toEmail: '={{ $json.fromEmail }}',
-            subject: '={{ $json.replySubject }}',
-            text: '={{ $json.replyBody }}',
-            options: { replyTo: c.smtp_user || '' }
-          },
-          id: 'node-send', name: 'Send AI Reply', type: 'n8n-nodes-base.emailSend', typeVersion: 2, position: [1100, 300],
-          credentials: { smtp: { id: '', name: 'SMTP — set up in n8n credentials' } }
-        },
-        {
-          parameters: {
-            chatId: c.telegram_chat_id || '0',
-            text: "={{ '📬 Lead Replied — AI Auto-Replied\\n👤 ' + $json.fromName + '\\n📧 ' + $json.fromEmail + '\\n📌 ' + $json.subject + '\\n\\n💬 ' + $json.body.slice(0, 150) + '\\n\\n🤖 AI replied.' }}",
-            additionalFields: { parse_mode: 'Markdown' }
-          },
-          id: 'node-tg', name: 'Telegram — Notify You', type: 'n8n-nodes-base.telegram', typeVersion: 1, position: [1100, 480],
-          credentials: { telegramApi: { id: '', name: 'Telegram — set up in n8n credentials' } }
-        }
+        { parameters: { triggerTimes: { item: [{ mode: 'everyX', value: 5, unit: 'minutes' }] } }, id: 'node-cron', name: 'Cron Trigger (Every 5m)', type: 'n8n-nodes-base.cron', typeVersion: 1, position: [0, 300] },
+        { parameters: { mailbox: 'INBOX', options: { allowUnauthorizedCerts: true, unseen: true } }, id: 'node-imap', name: 'Read Inbox (IMAP)', type: 'n8n-nodes-base.emailReadImap', typeVersion: 2, position: [220, 300], credentials: { imap: { id: '', name: 'Gmail IMAP — set up in n8n credentials' } } },
+        { parameters: { jsCode: `const em=$input.first().json;const inReplyTo=em.headerLines?.find(h=>h.key==='in-reply-to')?.line||'';const fromHeader=em.from?.value?.[0]||{};const fromEmail=fromHeader.address||'';const fromName=fromHeader.name||fromEmail.split('@')[0]||'there';const subject=em.subject||'';const body=em.text||em.html?.replace(/<[^>]+>/g,' ')||'';const ourEmail='${smtpFrom}';const isReply=!!inReplyTo||subject.toLowerCase().startsWith('re:');const isOurOwn=fromEmail.toLowerCase()===ourEmail.toLowerCase();const isAutoReply=/auto.?reply|out of office|vacation|noreply|no-reply/i.test(subject+fromEmail);if(!isReply||isOurOwn||isAutoReply||!fromEmail||!body.trim())return[];return[{json:{fromEmail,fromName,subject,body:body.slice(0,1000)}}];` }, id: 'node-filter', name: 'Filter — Replies Only', type: 'n8n-nodes-base.code', typeVersion: 2, position: [440, 300] },
+        { parameters: { url: `${apiUrl}/api/kb/text?email=${encodeURIComponent(email)}`, options: {} }, id: 'node-kb', name: 'Fetch KB', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [660, 300] },
+        { parameters: { jsCode: `const kb=$input.first().json;const lead=$('Filter — Replies Only').first().json;return[{json:{...lead,kbText:kb.kbText||'${co} builds products. Website: ${webUrl}'}}];` }, id: 'node-merge', name: 'Merge KB + Reply', type: 'n8n-nodes-base.code', typeVersion: 2, position: [880, 300] },
+        { parameters: { method: 'POST', url: `${apiUrl}/api/ai/chat`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: `={{ JSON.stringify({ systemPrompt: 'You are a helpful sales assistant for ${co}. Reply to this lead email warmly and professionally (under 120 words).\\\\nOnly answer questions about ${co}.\\\\nDo NOT mention pricing.\\\\nEnd with a call-to-action.\\\\nSign off as \\"${coTeam}\\".\\\\n\\\\nWEBSITE: ${webUrl}\\\\nBOOK A CALL: ${bookUrl}\\\\n\\\\nKNOWLEDGE BASE:\\\\n' + $json.kbText, userMessage: 'Lead: ' + $json.fromName + '\\\\nEmail: ' + $json.fromEmail + '\\\\n\\\\nTheir reply:\\\\n' + $json.body + '\\\\n\\\\nWrite a reply:', maxTokens: 300 }) }}` }, id: 'node-ai', name: 'Bedrock AI — Generate Reply', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [1100, 300] },
+        { parameters: { jsCode: `const r=$input.first().json;const aiReply=r.text?.trim();const lead=$('Merge KB + Reply').first().json;const replyBody=aiReply||'Hi '+lead.fromName+',\\\\n\\\\nThank you for your reply!\\\\n\\\\nBook a call: ${bookUrl}\\\\n${webUrl}\\\\n\\\\nBest regards,\\\\n${coTeam}';const replySubject=lead.subject.startsWith('Re:')?lead.subject:'Re: '+lead.subject;return[{json:{...lead,replyBody,replySubject}}];` }, id: 'node-extract', name: 'Extract AI Reply', type: 'n8n-nodes-base.code', typeVersion: 2, position: [1320, 300] },
+        { parameters: { fromEmail: smtpFrom, toEmail: '={{ $json.fromEmail }}', subject: '={{ $json.replySubject }}', text: '={{ $json.replyBody }}', options: { replyTo: smtpFrom } }, id: 'node-send', name: 'Send AI Reply', type: 'n8n-nodes-base.emailSend', typeVersion: 2, position: [1540, 200], credentials: { smtp: { id: '', name: 'SMTP — set up in n8n credentials' } } },
+        { parameters: { chatId: tgChat, text: "={{ '📬 *Lead Replied — AI Auto-Replied*\\n👤 ' + $json.fromName + '\\n📧 ' + $json.fromEmail + '\\n📌 ' + $json.subject + '\\n\\n💬 ' + $json.body.slice(0,200) + '\\n\\n🤖 AI replied.' }}", additionalFields: { parse_mode: 'Markdown' } }, id: 'node-tg', name: 'Telegram — Notify You', type: 'n8n-nodes-base.telegram', typeVersion: 1, position: [1540, 360], credentials: { telegramApi: { id: '', name: 'Telegram — set up in n8n credentials' } } },
+        { parameters: { method: 'POST', url: slackWh, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: "={{ JSON.stringify({ text: '📬 *Lead Replied — AI Auto-Replied*\\n👤 ' + $json.fromName + '\\n📧 ' + $json.fromEmail + '\\n📌 ' + $json.subject + '\\n\\n💬 ' + $json.body.slice(0,150) + '\\n\\n🤖 AI replied.' }) }}", options: {} }, id: 'node-slack', name: 'Slack — Notify You', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [1540, 520], onError: 'continueRegularOutput' }
       ],
       connections: {
         'Cron Trigger (Every 5m)': { main: [[{ node: 'Read Inbox (IMAP)', type: 'main', index: 0 }]] },
         'Read Inbox (IMAP)': { main: [[{ node: 'Filter — Replies Only', type: 'main', index: 0 }]] },
-        'Filter — Replies Only': { main: [[{ node: 'Bedrock AI — Generate Reply', type: 'main', index: 0 }]] },
+        'Filter — Replies Only': { main: [[{ node: 'Fetch KB', type: 'main', index: 0 }]] },
+        'Fetch KB': { main: [[{ node: 'Merge KB + Reply', type: 'main', index: 0 }]] },
+        'Merge KB + Reply': { main: [[{ node: 'Bedrock AI — Generate Reply', type: 'main', index: 0 }]] },
         'Bedrock AI — Generate Reply': { main: [[{ node: 'Extract AI Reply', type: 'main', index: 0 }]] },
-        'Extract AI Reply': { main: [[{ node: 'Send AI Reply', type: 'main', index: 0 }, { node: 'Telegram — Notify You', type: 'main', index: 0 }]] }
+        'Extract AI Reply': { main: [[{ node: 'Send AI Reply', type: 'main', index: 0 }, { node: 'Telegram — Notify You', type: 'main', index: 0 }, { node: 'Slack — Notify You', type: 'main', index: 0 }]] }
       },
-      settings: { executionOrder: 'v1' }
+      active: false, settings: { executionOrder: 'v1', saveManualExecutions: true }
+    };
+  } else if (type === 'fibonacci-nudge') {
+    wf = {
+      name: `${co} — Follow-up by CRM Status`,
+      nodes: [
+        { parameters: { triggerTimes: { item: [{ mode: 'everyX', value: 1, unit: 'hours' }] } }, id: 'node-cron', name: 'Cron — Every Hour', type: 'n8n-nodes-base.cron', typeVersion: 1, position: [0, 0] },
+        { parameters: { method: 'POST', url: `${crmUrl}/api/method/login`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Accept', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: `={ "usr": "${c.crm_user || ''}", "pwd": "${(c.crm_password || '').replace(/"/g, '\\"')}" }`, options: { response: { response: { fullResponse: true } } } }, id: 'node-login', name: 'Login to CRM', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [220, 0] },
+        { parameters: { jsCode: "const headers=$input.first().json.headers||{};const setCookie=Array.isArray(headers['set-cookie'])?headers['set-cookie'].join(', '):(headers['set-cookie']||'');const match=setCookie.match(/sid=([^;,]+)/);const sid=match?match[1]:'';if(!sid)throw new Error('Login failed');return[{json:{session_id:sid}}];" }, id: 'node-session', name: 'Extract Session ID', type: 'n8n-nodes-base.code', typeVersion: 2, position: [440, 0] },
+        { parameters: { url: `${crmUrl}/api/resource/CRM Lead`, sendQuery: true, queryParameters: { parameters: [{ name: 'fields', value: '["name","lead_name","first_name","email","mobile_no","status","organization"]' }, { name: 'filters', value: '[["status","in","Contacted,Nurture,Qualified"]]' }, { name: 'limit', value: '1' }, { name: 'order_by', value: 'modified asc' }] }, sendHeaders: true, headerParameters: { parameters: [{ name: 'Cookie', value: SID }] }, options: {} }, id: 'node-fetch', name: 'Fetch Leads to Follow Up', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [660, 0] },
+        { parameters: { jsCode: "const rows=$input.first().json.data||[];const results=[];for(const item of rows){const email=(item.email||'').trim();if(!email||!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email))continue;const name=item.lead_name||item.first_name||item.name;const company=(item.organization||'').trim();const status=(item.status||'').trim();const rawPhone=(item.mobile_no||'').trim();const digits=rawPhone.replace(/[^\\d]/g,'');let phone_10digit='';if(digits.length===10)phone_10digit=digits;else if(digits.length===12&&digits.startsWith('91'))phone_10digit=digits.slice(2);else if(digits.length===11&&digits.startsWith('0'))phone_10digit=digits.slice(1);results.push({json:{leadId:item.name,name,email,phone_10digit,has_phone:phone_10digit.length===10,company,status}});}if(results.length===0)return[{json:{skip:true}}];return results;" }, id: 'node-cat', name: 'Categorise by Status', type: 'n8n-nodes-base.code', typeVersion: 2, position: [880, 0] },
+        { parameters: { conditions: { options: { caseSensitive: true, typeValidation: 'strict', version: 1 }, conditions: [{ id: 'ns', leftValue: '={{ $json.skip }}', rightValue: true, operator: { type: 'boolean', operation: 'notEquals' } }], combinator: 'and' }, options: {} }, id: 'node-any', name: 'Any Leads?', type: 'n8n-nodes-base.if', typeVersion: 2, position: [1100, 0] },
+        { parameters: { jsCode: `const lead=$input.first().json;const ANGLES={'Contacted':'This lead got our first email but has not responded. Write a short warm follow-up nudge under 80 words. Ask a question or offer a demo.','Nurture':'This lead has shown interest. Write a warm helpful email under 120 words. Share a benefit or success story.','Qualified':'This lead is ready to buy. Write a confident closing email under 100 words.'};const angle=ANGLES[lead.status]||ANGLES['Contacted'];return[{json:{...lead,angle}}];` }, id: 'node-merge', name: 'Merge KB + Lead', type: 'n8n-nodes-base.code', typeVersion: 2, position: [1320, -100] },
+        { parameters: { method: 'POST', url: `${apiUrl}/api/ai/chat`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: `={{ JSON.stringify({ systemPrompt: 'You are a warm sales assistant for ${co}. Write a follow-up email to a lead.\\\\nLEAD STATUS: ' + $json.status + '\\\\nEMAIL ANGLE: ' + $json.angle + '\\\\nRULES:\\\\n- If lead has a product/org, write specifically about that product\\\\n- NEVER mention pricing\\\\n- End with:\\\\nBook a call: ${bookUrl}\\\\n${webUrl}\\\\n- Sign off as: ${coTeam}\\\\n- Write ONLY the email body', userMessage: 'Lead: ' + $json.name + '\\\\nProduct/Org: ' + ($json.company||'not specified') + '\\\\nStatus: ' + $json.status + '\\\\nWrite the follow-up email:', maxTokens: 250 }) }}` }, id: 'node-ai', name: 'Bedrock AI — Generate Nudge', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [1540, -100] },
+        { parameters: { jsCode: `const r=$input.first().json;const lead=$('Merge KB + Lead').first().json;const ai=r.text?.trim()||'';const name=lead.name||'there';const company=lead.company||'';const status=lead.status||'Contacted';const email=lead.email||'';const SUBJECTS={'Contacted':company?'Following up on '+company+', '+name:'Quick follow-up, '+name,'Nurture':company?company+' — let us help you get started':'We would love to help, '+name,'Qualified':'Ready to move forward, '+name+'?'};const subject=SUBJECTS[status]||('Following up, '+name);const emailBody=ai||'Hi '+name+',\\\\n\\\\nJust following up on my earlier message.\\\\n\\\\nBook a call: ${bookUrl}\\\\n${webUrl}\\\\n\\\\nBest regards,\\\\n${coTeam}';const smsText=('Hi '+name+', follow-up from ${co}. '+(company?company+'. ':'')+' Book: ${bookUrl}').slice(0,160);const nextStatus=status==='Contacted'?'Nurture':status;return[{json:{leadId:lead.leadId,name,email,phone_10digit:lead.phone_10digit||'',has_phone:lead.has_phone||false,company,status,subject,emailBody,smsText,nextStatus}}];` }, id: 'node-build', name: 'Build Nudge Email', type: 'n8n-nodes-base.code', typeVersion: 2, position: [1760, -100] },
+        { parameters: { fromEmail: smtpFrom, toEmail: '={{ $json.email }}', subject: '={{ $json.subject }}', text: '={{ $json.emailBody }}', options: {} }, id: 'node-send', name: 'Send Nudge Email', type: 'n8n-nodes-base.emailSend', typeVersion: 2, position: [1980, -200], credentials: { smtp: { id: '', name: 'SMTP — set up in n8n credentials' } } },
+        { parameters: { conditions: { options: { caseSensitive: true, typeValidation: 'strict', version: 1 }, conditions: [{ id: 'hp', leftValue: '={{ $json.has_phone }}', rightValue: true, operator: { type: 'boolean', operation: 'equals' } }], combinator: 'and' }, options: {} }, id: 'node-phone', name: 'Has Phone?', type: 'n8n-nodes-base.if', typeVersion: 2, position: [1980, -60] },
+        { parameters: { url: 'https://www.fast2sms.com/dev/bulkV2', sendQuery: true, queryParameters: { parameters: [{ name: 'authorization', value: f2sKey }, { name: 'sender_id', value: 'FSTSMS' }, { name: 'message', value: '={{ $json.smsText }}' }, { name: 'language', value: 'english' }, { name: 'route', value: 'q' }, { name: 'numbers', value: '={{ $json.phone_10digit }}' }] }, options: {}, method: 'GET' }, id: 'node-sms', name: 'Fast2SMS — Send Nudge SMS', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [2200, -60], onError: 'continueRegularOutput' },
+        { parameters: { chatId: tgChat, text: "={{ '🔔 *Follow-up Sent*\\n👤 ' + $json.name + '\\n📧 ' + $json.email + '\\n🏢 ' + ($json.company||'No product/org') + '\\n📊 Status: ' + $json.status + '\\n✉️ Email sent' + ($json.has_phone?' + SMS sent':'') + ' ✓' }}", additionalFields: { parse_mode: 'Markdown' } }, id: 'node-tg', name: 'Telegram — Nudge Alert', type: 'n8n-nodes-base.telegram', typeVersion: 1, position: [1980, 80], credentials: { telegramApi: { id: '', name: 'Telegram — set up in n8n credentials' } } },
+        { parameters: { method: 'POST', url: slackWh, sendHeaders: true, headerParameters: { parameters: [{ name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: "={{ JSON.stringify({ text: '🔔 *Follow-up Sent*\\n👤 ' + $json.name + '\\n📧 ' + $json.email + '\\n🏢 ' + ($json.company||'No product/org') + '\\n📊 Status: ' + $json.status + '\\n✉️ Email sent' + ($json.has_phone?' + SMS sent':'') }) }}", options: {} }, id: 'node-slack', name: 'Slack — Nudge Alert', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [1980, 240], onError: 'continueRegularOutput' },
+        { parameters: { method: 'PUT', url: `={{ '${crmUrl}/api/resource/CRM Lead/' + $('Build Nudge Email').first().json.leadId }}`, sendHeaders: true, headerParameters: { parameters: [{ name: 'Cookie', value: SID }, { name: 'Content-Type', value: 'application/json' }] }, sendBody: true, specifyBody: 'json', jsonBody: "={{ JSON.stringify({ status: $('Build Nudge Email').first().json.nextStatus }) }}", options: {} }, id: 'node-update', name: 'Update Lead Status', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [2200, -200], retryOnFail: true, waitBetweenTries: 2000, onError: 'continueRegularOutput' }
+      ],
+      connections: {
+        'Cron — Every Hour': { main: [[{ node: 'Login to CRM', type: 'main', index: 0 }]] },
+        'Login to CRM': { main: [[{ node: 'Extract Session ID', type: 'main', index: 0 }]] },
+        'Extract Session ID': { main: [[{ node: 'Fetch Leads to Follow Up', type: 'main', index: 0 }]] },
+        'Fetch Leads to Follow Up': { main: [[{ node: 'Categorise by Status', type: 'main', index: 0 }]] },
+        'Categorise by Status': { main: [[{ node: 'Any Leads?', type: 'main', index: 0 }]] },
+        'Any Leads?': { main: [[{ node: 'Merge KB + Lead', type: 'main', index: 0 }], []] },
+        'Merge KB + Lead': { main: [[{ node: 'Bedrock AI — Generate Nudge', type: 'main', index: 0 }]] },
+        'Bedrock AI — Generate Nudge': { main: [[{ node: 'Build Nudge Email', type: 'main', index: 0 }]] },
+        'Build Nudge Email': { main: [[{ node: 'Send Nudge Email', type: 'main', index: 0 }, { node: 'Has Phone?', type: 'main', index: 0 }, { node: 'Telegram — Nudge Alert', type: 'main', index: 0 }, { node: 'Slack — Nudge Alert', type: 'main', index: 0 }]] },
+        'Send Nudge Email': { main: [[{ node: 'Update Lead Status', type: 'main', index: 0 }]] },
+        'Has Phone?': { main: [[{ node: 'Fast2SMS — Send Nudge SMS', type: 'main', index: 0 }], []] }
+      },
+      active: false, settings: { executionOrder: 'v1' }
     };
   } else {
-    return err('Unknown workflow type. Use lead-nurturing or email-reply', 400);
+    return err('Unknown workflow type', 400);
   }
-
   const wfJson = JSON.stringify(wf, null, 2);
 
   return {

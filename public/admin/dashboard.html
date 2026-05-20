@@ -320,7 +320,7 @@
       showToast(e.message, 'error');
     }
     btn.disabled = false;
-    btn.innerHTML = '⬇️ ' + (type === 'lead-nurturing' ? 'Lead Nurturing' : type === 'email-reply' ? 'Email Reply' : 'Telegram Bot');
+    btn.innerHTML = '⬇️ ' + (type === 'lead-nurturing' ? 'Lead Nurturing' : type === 'email-reply' ? 'Email Reply' : type === 'fibonacci-nudge' ? 'Fibonacci Nudge' : type);
   }
 
   /* ── Logout ── */
