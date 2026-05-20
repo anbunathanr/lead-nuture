@@ -1,36 +1,52 @@
-# Lead Nurturing Automation — Digitrans Solutions
+# Nurturio — AI-Powered Lead Nurturing SaaS
 
-Automated CRM lead outreach system. Every 5 minutes, fetches new leads from Frappe CRM, sends personalised messages via Slack, Telegram, Email, WhatsApp, and SMS, then marks them as Contacted. A live analytics dashboard shows outreach progress.
+Nurturio is a multi-tenant SaaS platform that automates lead nurturing for businesses using AI (AWS Bedrock Claude), n8n workflows, Frappe CRM, email (SMTP), and SMS (Fast2SMS).
+
+## Live URLs
+
+| Service | URL |
+|---------|-----|
+| Customer App | `http://nurturio-static-976193236457-prod.s3-website-us-east-1.amazonaws.com` |
+| Admin Panel | `http://nurturio-static-976193236457-prod.s3-website-us-east-1.amazonaws.com/admin/login.html` |
+| API (Lambda) | `https://1pqeziijq3.execute-api.us-east-1.amazonaws.com` |
+| Local Dev | `http://localhost:8080` |
 
 ## Architecture
 
 ```
-Frappe CRM
-    │
-    ▼
-n8n Workflow (every 5 min)
-    ├── Login to CRM (fresh session)
-    ├── Fetch leads where status = New (2 per run)
-    ├── Validate email
-    ├── Send alerts → Slack · Telegram · Email · WhatsApp · SMS
-    └── Mark lead as Contacted in CRM
+Customer Browser (S3 Static)
+        │
+        ▼
+API Gateway → Lambda (api-handler.js)
+        │
+        ├── DynamoDB  (customers, sessions)
+        ├── S3        (knowledge base files per customer)
+        ├── SSM       (secrets)
+        └── Bedrock   (Claude Haiku 4.5 — AI email/chat)
 
-Express Server (local) / AWS Lambda (production)
-    └── GET /api/crm/leads  →  Analytics Dashboard (S3/CloudFront)
+n8n Workflows (company-hosted at n8n.digitransolutions.in)
+        ├── Lead Nurturing    (every 5 min — New leads → email + SMS)
+        ├── Email Reply       (every 5 min — IMAP poll → AI reply)
+        └── Follow-up         (every hour  — Contacted/Nurture/Qualified → follow-up)
 ```
 
 ## Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Workflow automation | n8n (company-hosted) |
+| AI | AWS Bedrock Claude Haiku 4.5 |
+| Workflow automation | n8n (self-hosted) |
 | CRM | Frappe CRM |
-| Alerts | Slack · Telegram · Gmail SMTP · Twilio WhatsApp/SMS |
-| Dashboard API | Express (local) / AWS Lambda + API Gateway (production) |
-| Dashboard UI | Static HTML → S3 + CloudFront |
+| Email | SMTP (Gmail App Password) |
+| SMS | Fast2SMS (India) |
+| Alerts | Slack Webhook + Telegram Bot |
+| Backend | Node.js + Express (local) / AWS Lambda (production) |
+| Database | AWS DynamoDB |
+| Storage | AWS S3 |
+| Frontend | Static HTML → S3 |
 | Secrets | `.env` (local) / AWS SSM Parameter Store (production) |
 
-## Quick Start (Local)
+## Local Development
 
 ```bash
 # 1. Install dependencies
@@ -39,107 +55,144 @@ npm install
 # 2. Copy and fill in credentials
 cp .env.example .env
 
-# 3. Start the dashboard server
+# 3. Start the server
 npm start
-# Dashboard → http://localhost:3001
+# App → http://localhost:8080
+# Admin → http://localhost:8080/admin/login.html
 ```
 
-## n8n Workflow Setup
+## Customer Workflow
 
-The workflow runs on your company's n8n instance — no local n8n needed.
+1. Customer signs up at `/` with company name, website, CRM credentials, SMTP credentials
+2. Customer trains their Knowledge Base (paste text, upload PDF, or crawl website URL)
+3. Admin downloads 3 n8n workflows pre-filled with customer's details:
+   - **Lead Nurturing** — picks up `New` leads from CRM, sends AI email + SMS, marks `Contacted`
+   - **Email Reply** — polls IMAP inbox, auto-replies to lead responses using live KB
+   - **Follow-up** — hourly, sends follow-ups to `Contacted`/`Nurture`/`Qualified` leads
+4. Customer imports workflows into n8n, sets up SMTP + Telegram credentials, activates
 
-1. Open your company n8n
-2. Import `workflows/lead-nurturing-workflow.json`
-3. Replace all `{{PLACEHOLDER}}` values with real credentials (see table below)
-4. Set up credentials in n8n for Telegram, SMTP, and Twilio Basic Auth
-5. Activate the workflow
+## CRM Lead Status Flow
 
-### Placeholders in workflow JSON
-
-| Placeholder | What to replace with |
-|-------------|---------------------|
-| `{{CRM_HOST}}` | `your-frappe-host:8000` |
-| `{{CRM_USER}}` | Frappe login email |
-| `{{CRM_PASSWORD}}` | Frappe login password |
-| `{{SLACK_WEBHOOK_PATH}}` | `T.../B.../xxx` (from Slack webhook URL) |
-| `{{TELEGRAM_CHAT_ID}}` | Your Telegram chat ID |
-| `{{TWILIO_ACCOUNT_SID}}` | Twilio Account SID |
-| `{{SMTP_FROM_EMAIL}}` | Sender email address |
-
-## Environment Variables
-
-Copy `.env.example` to `.env` and fill in:
-
-```bash
-cp .env.example .env
+```
+New → (Lead Nurturing workflow) → Contacted
+Contacted → (Follow-up workflow) → Nurture   (after first follow-up)
+Nurture → (manually by sales) → Qualified
+Qualified → (Follow-up workflow sends closing email)
+Won / Unqualified / Junk → no more emails
 ```
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `CRM_BASE_URL` | ✅ | Frappe CRM base URL |
-| `CRM_USER` | ✅ | Frappe login email |
-| `CRM_PASSWORD` | ✅ | Frappe login password |
-| `PORT` | optional | Server port (default: 3001) |
+## n8n Workflow Details
+
+### Lead Nurturing (every 5 min)
+- Fetches 1 `New` lead from Frappe CRM
+- Slack + Telegram alert fires immediately for every lead
+- If lead has `organization` field → personalized product email
+- If no `organization` → welcome email listing all products
+- Sends email (SMTP) + SMS (Fast2SMS) in parallel
+- Marks lead as `Contacted` in CRM
+
+### Email Reply (every 5 min)
+- Polls Gmail INBOX via IMAP for unread emails
+- Filters to replies only (has `Re:` subject or `In-Reply-To` header)
+- Fetches live KB from Lambda API
+- Generates AI reply using Bedrock + KB
+- Sends reply via SMTP
+- Notifies via Telegram + Slack
+
+### Follow-up / Fibonacci Nudge (every hour)
+- Fetches 1 lead sorted by `modified ASC` (least-recently-touched first)
+- Status-based email tone:
+  - `Contacted` → cold nudge (ask a question, offer demo)
+  - `Nurture` → warm email (share benefit, success story)
+  - `Qualified` → closing email
+- Sends email + SMS
+- Moves `Contacted` → `Nurture` after first follow-up (rotates queue)
+- Notifies via Telegram + Slack
 
 ## API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/crm/leads` | Live lead stats + full lead list for dashboard |
-| `GET` | `/api/crm/health` | CRM connectivity check |
+| `POST` | `/api/customer/register` | Register new customer |
+| `POST` | `/api/customer/login` | Customer login |
+| `GET` | `/api/customer/profile?email=` | Get profile |
+| `PUT` | `/api/customer/profile` | Update profile |
+| `POST` | `/api/kb/train` | Train KB from URL |
+| `POST` | `/api/kb/manual` | Add text to KB |
+| `GET` | `/api/kb/text?email=` | Get KB text (used by n8n) |
+| `DELETE` | `/api/kb?email=` | Clear KB |
+| `POST` | `/api/ai/chat` | Bedrock AI chat (used by n8n) |
+| `POST` | `/api/chat/widget` | Chatbot widget endpoint |
+| `POST` | `/api/admin/login` | Admin login |
+| `GET` | `/api/admin/customers` | List all customers |
+| `GET` | `/api/admin/customers/:email/workflow?type=` | Download workflow JSON |
 
-## CRM Lead Statuses
+## AWS Deployment
 
-| Status | Set by | Meaning |
-|--------|--------|---------|
-| `New` | CRM / manual | Not yet contacted — workflow picks these up |
-| `Contacted` | n8n (automatic) | Initial message sent |
-| `Nurture` | Sales team | Replied but not ready |
-| `Qualified` | Sales team | Wants a demo/call |
-| `Unqualified` | Sales team | Not a good fit |
-| `Junk` | Sales team | Spam or invalid |
+```bash
+# Copy bedrock client to lambda
+Copy-Item ai/bedrock-client.js lambda/bedrock-client.js -Force
+
+# Build
+sam build --template-file infrastructure/template.yaml
+
+# Deploy Lambda
+sam deploy --template-file .aws-sam/build/template.yaml \
+  --stack-name nurturio \
+  --capabilities CAPABILITY_IAM \
+  --region us-east-1 \
+  --s3-bucket nurturio-deploy-976193236457 \
+  --parameter-overrides AdminPassword="nurturio-admin-2024" \
+    BedrockModelId="us.anthropic.claude-haiku-4-5-20251001-v1:0" \
+    Environment="prod" \
+  --no-confirm-changeset
+
+# Sync static frontend
+aws s3 sync public/ s3://nurturio-static-976193236457-prod/ --delete
+```
+
+## AWS Resources
+
+| Resource | Name |
+|----------|------|
+| API Gateway | `https://1pqeziijq3.execute-api.us-east-1.amazonaws.com` |
+| S3 Static | `nurturio-static-976193236457-prod` |
+| S3 KB | `nurturio-kb-976193236457-prod` |
+| DynamoDB Customers | `nurturio-customers-prod` |
+| DynamoDB Sessions | `nurturio-sessions-prod` |
+| Deploy Bucket | `nurturio-deploy-976193236457` |
 
 ## Project Structure
 
 ```
-├── server.js                        # Local dev server (Express)
-├── crm.js                           # Frappe CRM client (session, fetch, stats)
+├── server.js                    # Local dev server (Express, port 8080)
 ├── lambda/
-│   └── handler.js                   # AWS Lambda handler (production)
-├── workflows/
-│   └── lead-nurturing-workflow.json # n8n workflow (import into company n8n)
+│   └── api-handler.js           # AWS Lambda handler (production)
+├── ai/
+│   ├── bedrock-client.js        # AWS Bedrock Sigv4 client
+│   ├── knowledge-base.js        # KB build/load/chunk
+│   ├── email-reply.js           # AI email reply generator
+│   ├── fibonacci-nudge.js       # Nudge email generator
+│   └── imap-poller.js           # IMAP email polling
 ├── public/
-│   └── index.html                   # Analytics dashboard
-├── docs/
-│   └── aws-deployment.md            # AWS serverless deployment guide
-├── tests/
-│   ├── crm.unit.test.js             # Unit tests
-│   ├── crm.routes.test.js           # Route tests
-│   └── crm.pbt.test.js              # Property-based tests
-├── .env.example                     # Environment variable template
+│   ├── index.html               # Customer login/signup
+│   ├── dashboard.html           # Customer dashboard (Profile/CRM/Email/Alerts/KB)
+│   ├── chatbot-widget.html      # Embeddable AI chatbot
+│   └── admin/
+│       ├── login.html           # Admin login
+│       └── dashboard.html       # Admin panel (customer list + workflow downloads)
+├── infrastructure/
+│   └── template.yaml            # AWS SAM template
+├── data/
+│   └── customers/               # Local customer data (gitignored)
+├── .env.example                 # Environment variable template
 └── .gitignore
 ```
 
-## Running Tests
+## Security Notes
 
-```bash
-npm test
-```
-
-## Production Deployment (AWS Serverless)
-
-Uses only free-tier eligible services: **Lambda · API Gateway · S3 · CloudFront · SSM**
-
-See [`docs/aws-deployment.md`](docs/aws-deployment.md) for step-by-step instructions.
-
-```
-Browser → CloudFront → S3 (index.html)
-                ↓
-         API Gateway → Lambda → Frappe CRM
-```
-
-## Security
-
-- Never commit `.env` — it's in `.gitignore`
-- The workflow JSON uses `{{PLACEHOLDER}}` values — fill them in n8n directly, not in the file
-- For production, store credentials in AWS SSM Parameter Store instead of environment variables
+- `.env` is gitignored — never commit credentials
+- `data/customers/` is gitignored — contains customer credentials
+- `workflows/` JSON files are gitignored — contain customer-specific secrets
+- `scripts/` is gitignored — contain hardcoded credentials for local use
+- Production secrets stored in AWS SSM Parameter Store
