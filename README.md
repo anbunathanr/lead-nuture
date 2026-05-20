@@ -81,7 +81,40 @@ Qualified → (Follow-up workflow sends closing email)
 Won / Unqualified / Junk → no more emails
 ```
 
-## n8n Workflow Details
+## Alert Systems
+
+Nurturio sends real-time alerts to your team through multiple channels whenever a lead is processed.
+
+### Slack (Team Channel)
+- New lead detected → alert with name, email, phone, product/org
+- Shows whether email + SMS were sent or lead was marked Junk
+- Follow-up sent → alert with lead name, status, and channels used
+- Email reply received → alert with lead message preview
+
+### Telegram (Personal / Team Bot)
+- Same alerts as Slack but delivered to your Telegram chat
+- Get your Chat ID by messaging `@userinfobot` on Telegram
+- Supports Markdown formatting for clean readable alerts
+- Works on mobile — instant push notifications
+
+### Alert Content per Event
+
+| Event | What you see |
+|-------|-------------|
+| New lead (with product) | 🎯 Targeted Lead — [Product] · Name · Email · Phone · ✉️ Email sending... 📲 SMS sending... |
+| New lead (no product) | 📋 New Lead · Name · Email · Phone · ✉️ Email sending... |
+| No valid email | ⚠️ No valid email — Junk |
+| Follow-up sent | 🔔 Follow-up Sent · Name · Email · Status · ✉️ Email sent + SMS sent ✓ |
+| Lead replied (email) | 📬 Lead Replied — AI Auto-Replied · Name · Email · Subject · Message preview |
+
+### SMS (Fast2SMS — India)
+- Sent directly to the **lead's** phone number (not your team)
+- Pure ASCII messages, max 160 chars = 1 segment = ₹5 per SMS
+- Sender ID: `FSTSMS` (shared Fast2SMS sender)
+- Requires ₹100 minimum recharge at fast2sms.com
+- API key stored in `.env` as `FAST2SMS_API_KEY` — injected server-side into workflows
+
+
 
 ### Lead Nurturing (every 5 min)
 - Fetches 1 `New` lead from Frappe CRM
