@@ -374,6 +374,28 @@ async function handleKBText(email) {
   return ok({ kbText, trained: true, chunks: kb.chunks.length });
 }
 
+async function handleKBDelete(email, cookieHeader, authHeader) {
+  if (!email) return err('email required', 400);
+  const sessionEmail = await getSessionEmail(cookieHeader, authHeader);
+  if (!sessionEmail || sessionEmail.toLowerCase() !== email.toLowerCase()) return err('Unauthorized', 401);
+
+  // Delete KB file from S3
+  try {
+    const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
+    await s3.send(new DeleteObjectCommand({ Bucket: KB_BUCKET, Key: kbKey(email) }));
+  } catch { /* already gone */ }
+
+  // Mark kb_trained = false in DynamoDB
+  await dynamo.send(new UpdateCommand({
+    TableName: CUSTOMERS_TABLE,
+    Key: { email },
+    UpdateExpression: 'SET kb_trained = :f, updated_at = :u',
+    ExpressionAttributeValues: { ':f': false, ':u': new Date().toISOString() },
+  }));
+
+  return ok({ success: true });
+}
+
 async function handleAIChat(body) {
   const { systemPrompt, userMessage, maxTokens = 400 } = body;
   if (!userMessage) return err('userMessage required', 400);
@@ -769,6 +791,7 @@ exports.handler = async (event) => {
     if (method === 'POST'   && path === '/api/kb/manual') return await handleKBManual(parsed, cookies, authHeader);
     if (method === 'GET'    && path === '/api/kb')        return await handleKBGet(qs.email, cookies, authHeader);
     if (method === 'GET'    && path === '/api/kb/text')   return await handleKBText(qs.email);
+    if (method === 'DELETE' && path === '/api/kb')        return await handleKBDelete(qs.email, cookies, authHeader);
 
     // AI
     if (method === 'POST' && path === '/api/ai/chat')       return await handleAIChat(parsed);

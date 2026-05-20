@@ -367,12 +367,8 @@ function App() {
               <Field label="CRM Base URL" value={form.crm_base_url} onChange={v => set('crm_base_url', v)} placeholder="http://your-crm:8000"/>
               <Field label="CRM Username" value={form.crm_user} onChange={v => set('crm_user', v)} placeholder="admin@company.com"/>
               <Field label="CRM Password" type="password" value={form.crm_password} onChange={v => set('crm_password', v)} placeholder="••••••••"/>
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 600, color: '#94a3b8', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Leads per Run</label>
-                <select value={form.leads_per_run || '2'} onChange={e => set('leads_per_run', e.target.value)}
-                  style={{ ...inputStyle, borderColor: C.border, cursor: 'pointer' }}>
-                  {['2','5','10','20'].map(v => <option key={v} value={v}>{v} leads per 5 minutes</option>)}
-                </select>
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.78rem', color: C.muted }}>
+                ⚡ The workflow processes <strong style={{ color: C.text }}>1 lead every 5 minutes</strong> — each lead gets a personalised email and SMS automatically.
               </div>
               <button onClick={saveProfile} disabled={saving} style={{
                 background: saving ? C.border : C.accent, color: '#fff', border: 'none',
@@ -518,6 +514,29 @@ function App() {
 
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '1rem', fontSize: '0.8rem', color: C.muted, lineHeight: 1.8 }}>
                 💡 <strong style={{ color: C.text }}>Tip:</strong> Re-train whenever you add new products to your website. The AI will automatically pick up the changes in the next email run.
+              </div>
+
+              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: '0.78rem', color: C.muted, marginBottom: '0.5rem' }}>
+                  Want to start fresh? Clear all existing KB chunks and re-train from scratch.
+                </div>
+                <button onClick={async () => {
+                  if (!confirm('Clear all knowledge base data? This cannot be undone.')) return;
+                  try {
+                    const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb?email=' + encodeURIComponent(user.email), {
+                      method: 'DELETE', headers: authHeaders()
+                    });
+                    if (!res.ok) throw new Error('Failed');
+                    setKbTrained(false);
+                    showToast('Knowledge base cleared', 'success');
+                  } catch (e) { showToast('Failed to clear KB', 'error'); }
+                }} style={{
+                  background: 'transparent', border: `1px solid #f87171`, color: '#f87171',
+                  padding: '0.45rem 1rem', borderRadius: 8, fontSize: '0.78rem',
+                  fontWeight: 600, cursor: 'pointer'
+                }}>
+                  🗑 Clear Knowledge Base
+                </button>
               </div>
             </div>
           )}

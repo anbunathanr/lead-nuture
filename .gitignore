@@ -26,6 +26,7 @@ lambda/workflow-template.json
 workflows/lead-nurturing-workflow.json
 workflows/email-reply-workflow.json
 workflows/telegram-bot-workflow.json
+workflows/fibonacci-nudge-workflow.json
 
 # Tenant config and data (contain secrets and crawled content)
 data/tenant-config.json

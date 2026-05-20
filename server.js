@@ -178,13 +178,49 @@ app.get('/api/kb/text', (req, res) => {
 
 // DELETE /api/kb - clear the knowledge base
 app.delete('/api/kb', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  const KB_FILE = path.join(__dirname, 'data/knowledge-base.json');
-  if (fs.existsSync(KB_FILE)) fs.unlinkSync(KB_FILE);
-  const cfg = loadConfig();
-  if (cfg) { cfg.kb_chunk_count = 0; cfg.kb_built_at = null; saveConfig(cfg); }
-  res.json({ success: true });
+  try {
+    const email = req.query.email || null;
+
+    if (email) {
+      // Validate session
+      const sessionEmail = getCustomerFromSession(req);
+      // Also support Bearer token
+      const authHeader = req.headers['authorization'] || '';
+      let authorized = sessionEmail && sessionEmail.toLowerCase() === email.toLowerCase();
+      if (!authorized && authHeader.startsWith('Bearer ')) {
+        // Check in-memory sessions by token
+        const token = authHeader.slice(7);
+        const session = CUSTOMER_SESSIONS.get(token);
+        if (session && session.email.toLowerCase() === email.toLowerCase() && session.expires > Date.now()) {
+          authorized = true;
+        }
+      }
+      if (!authorized) return res.status(401).json({ error: 'Unauthorized' });
+
+      // Delete per-customer KB file
+      const kbPath = path.join(CUSTOMERS_DIR, sanitizeEmail(email) + '-kb.json');
+      if (fs.existsSync(kbPath)) fs.unlinkSync(kbPath);
+
+      // Mark kb_trained = false in customer profile
+      const cPath = customerFilePath(email);
+      if (fs.existsSync(cPath)) {
+        const cData = JSON.parse(fs.readFileSync(cPath, 'utf8'));
+        cData.kb_trained = false;
+        cData.updated_at = new Date().toISOString();
+        fs.writeFileSync(cPath, JSON.stringify(cData, null, 2));
+      }
+    } else {
+      // Clear global KB
+      const KB_FILE = path.join(__dirname, 'data/knowledge-base.json');
+      if (fs.existsSync(KB_FILE)) fs.unlinkSync(KB_FILE);
+      const cfg = loadConfig();
+      if (cfg) { cfg.kb_chunk_count = 0; cfg.kb_built_at = null; saveConfig(cfg); }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/config', (req, res) => {
@@ -430,7 +466,7 @@ app.post('/api/ai/reply', async (req, res) => {
       awsAccessKey:  process.env.AWS_ACCESS_KEY_ID,
       awsSecretKey:  process.env.AWS_SECRET_ACCESS_KEY,
       awsRegion:     process.env.AWS_REGION || 'us-east-1',
-      bedrockModelId: process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-haiku-20240307-v1:0',
+      bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
     });
 
     res.json({ reply });
@@ -453,7 +489,7 @@ app.post('/api/ai/chat', async (req, res) => {
       accessKey:  process.env.AWS_ACCESS_KEY_ID,
       secretKey:  process.env.AWS_SECRET_ACCESS_KEY,
       region:     process.env.AWS_REGION      || 'us-east-1',
-      modelId:    process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-haiku-20240307-v1:0',
+      modelId:    process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
       systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
       maxTokens,
@@ -777,7 +813,7 @@ app.post('/api/customer/register', async (req, res) => {
       slack_webhook:      slack_webhook      || '',
       telegram_chat_id:   telegram_chat_id   || '',
       telegram_bot_url:   telegram_bot_url   || '',
-      leads_per_run:      leads_per_run      || '2',
+      leads_per_run:      '1',
       registered_at: new Date().toISOString(),
       status: 'active',
     };
@@ -897,6 +933,7 @@ app.put('/api/customer/profile', (req, res) => {
     const existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     delete updates.password_hash;
     delete updates.password;
+    updates.leads_per_run = '1'; // always 1 lead per run
     const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
     fs.writeFileSync(filePath, JSON.stringify(updated, null, 2));
 
@@ -1062,23 +1099,31 @@ app.get('/api/admin/customers', requireAdmin, (req, res) => {
 });
 
 // GET /api/admin/customers/:email/workflow � download a specific workflow
-// ?type=lead-nurturing | email-reply | telegram-bot (default: lead-nurturing)
+// ?type=lead-nurturing | email-reply | fibonacci-nudge (default: lead-nurturing)
 app.get('/api/admin/customers/:email/workflow', requireAdmin, (req, res) => {
   try {
     const email   = decodeURIComponent(req.params.email);
     const type    = req.query.type || 'lead-nurturing';
     const safeName = sanitizeEmail(email);
     const fileMap = {
-      'lead-nurturing': safeName + '-lead-nurturing-workflow.json',
-      'email-reply':    safeName + '-email-reply-workflow.json',
-      'telegram-bot':   safeName + '-telegram-bot-workflow.json',
+      'lead-nurturing':   safeName + '-lead-nurturing-workflow.json',
+      'email-reply':      safeName + '-email-reply-workflow.json',
+      'fibonacci-nudge':  safeName + '-fibonacci-nudge-workflow.json',
     };
     // Fall back to old single-workflow file for backwards compat
     const wfFile = fileMap[type] || (safeName + '-workflow.json');
     const wfPath = path.join(CUSTOMERS_DIR, wfFile);
     const fallback = path.join(CUSTOMERS_DIR, safeName + '-workflow.json');
 
-    const filePath = fs.existsSync(wfPath) ? wfPath : (fs.existsSync(fallback) ? fallback : null);
+    // For fibonacci-nudge, fall back to the template if no customer-specific file
+    const templateFallback = type === 'fibonacci-nudge'
+      ? path.join(__dirname, 'workflows/fibonacci-nudge-workflow.json')
+      : null;
+
+    const filePath = fs.existsSync(wfPath) ? wfPath
+      : (fs.existsSync(fallback) ? fallback
+      : (templateFallback && fs.existsSync(templateFallback) ? templateFallback : null));
+
     if (!filePath) {
       return res.status(404).json({ error: 'Workflow not found. Ask the customer to save their profile first.' });
     }
@@ -1091,15 +1136,15 @@ app.get('/api/admin/customers/:email/workflow', requireAdmin, (req, res) => {
   }
 });
 
-// GET /api/admin/customers/:email/workflows-all � list all available workflow files for a customer
+// GET /api/admin/customers/:email/workflows-all — list all available workflow files for a customer
 app.get('/api/admin/customers/:email/workflows-all', requireAdmin, (req, res) => {
   try {
     const email    = decodeURIComponent(req.params.email);
     const safeName = sanitizeEmail(email);
     const types = [
-      { type: 'lead-nurturing', label: 'Lead Nurturing',  file: safeName + '-lead-nurturing-workflow.json' },
-      { type: 'email-reply',    label: 'Email AI Reply',  file: safeName + '-email-reply-workflow.json'    },
-      { type: 'telegram-bot',   label: 'Telegram AI Bot', file: safeName + '-telegram-bot-workflow.json'   },
+      { type: 'lead-nurturing',  label: 'Lead Nurturing',       file: safeName + '-lead-nurturing-workflow.json'  },
+      { type: 'email-reply',     label: 'AI Email Reply',        file: safeName + '-email-reply-workflow.json'     },
+      { type: 'fibonacci-nudge', label: 'Fibonacci Nudge Emails', file: safeName + '-fibonacci-nudge-workflow.json' },
     ];
     const available = types.map(t => ({
       ...t,
@@ -1158,7 +1203,7 @@ setInterval(async () => {
       awsAccessKey:   process.env.AWS_ACCESS_KEY_ID,
       awsSecretKey:   process.env.AWS_SECRET_ACCESS_KEY,
       awsRegion:      process.env.AWS_REGION || 'us-east-1',
-      bedrockModelId: process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-haiku-20240307-v1:0',
+      bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
     });
     if (result.replied > 0) console.log(`[IMAP] Auto-replied to ${result.replied} emails`);
   } catch (err) {
