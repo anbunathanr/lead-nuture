@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Nurturio - AI Lead Nurturing SaaS (Serverless, no CloudFront)
+Description: Nurturio - AI Lead Nurturing SaaS (Serverless + CloudFront)
 
 Parameters:
   AdminPassword:
@@ -82,14 +82,6 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub nurturio-static-${AWS::AccountId}-${Environment}
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
 
   StaticBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -98,9 +90,49 @@ Resources:
       PolicyDocument:
         Statement:
           - Effect: Allow
-            Principal: '*'
+            Principal:
+              Service: cloudfront.amazonaws.com
             Action: s3:GetObject
             Resource: !Sub ${StaticBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}
+
+  # CloudFront
+
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub nurturio-oac-${Environment}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt StaticBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          Compress: true
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
 
   # SSM Parameters
 
@@ -233,9 +265,13 @@ Outputs:
     Description: API Gateway URL — use this in your n8n workflows
     Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
 
-  StaticWebsiteUrl:
-    Description: S3 static website URL — your app URL
-    Value: !Sub http://${StaticBucket}.s3-website-${AWS::Region}.amazonaws.com
+  CloudFrontUrl:
+    Description: CloudFront URL — your app URL (HTTPS)
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID (for cache invalidation)
+    Value: !Ref CloudFrontDistribution
 
   StaticBucketName:
     Description: S3 bucket for static files
