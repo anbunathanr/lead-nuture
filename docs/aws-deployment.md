@@ -10,12 +10,14 @@
 
 | Resource | Name / URL |
 |----------|-----------|
+| **CloudFront (Static Site)** | **`https://dew2yodq4ld2q.cloudfront.net`** |
 | API Gateway | `https://1pqeziijq3.execute-api.us-east-1.amazonaws.com` |
-| S3 Static | `nurturio-static-976193236457-prod` |
+| S3 Static (origin) | `nurturio-static-976193236457-prod` |
 | S3 KB | `nurturio-kb-976193236457-prod` |
 | DynamoDB Customers | `nurturio-customers-prod` |
 | DynamoDB Sessions | `nurturio-sessions-prod` |
 | Deploy Bucket | `nurturio-deploy-976193236457` |
+| CloudFront Distribution ID | `E55GGZN5WBS0S` |
 | AWS Account | `976193236457` |
 | Region | `us-east-1` |
 
@@ -40,7 +42,29 @@ Browser
 
 ---
 
-## Setting Up CloudFront (HTTPS + Custom Domain)
+## CloudFront — Already Deployed
+
+CloudFront distribution is live:
+
+| | |
+|-|-|
+| **Static Site URL** | `https://dew2yodq4ld2q.cloudfront.net` |
+| Distribution ID | `E55GGZN5WBS0S` |
+| Origin | `nurturio-static-976193236457-prod.s3-website-us-east-1.amazonaws.com` |
+| Status | Deployed (allow ~10 min for first propagation) |
+
+**Customer App**: `https://dew2yodq4ld2q.cloudfront.net`
+**Admin Panel**: `https://dew2yodq4ld2q.cloudfront.net/admin/login.html`
+**Chatbot**: `https://dew2yodq4ld2q.cloudfront.net/chatbot-widget.html?company=EMAIL`
+
+### To invalidate cache after deploying new static files:
+```bash
+aws cloudfront create-invalidation --distribution-id E55GGZN5WBS0S --paths "/*"
+```
+
+---
+
+## Setting Up CloudFront (Reference — Already Done)
 
 Currently the app runs on S3 website URL (HTTP only). CloudFront adds HTTPS and a clean URL.
 

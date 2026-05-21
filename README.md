@@ -6,9 +6,11 @@ Nurturio is a multi-tenant SaaS platform that automates lead nurturing for busin
 
 | Service | URL |
 |---------|-----|
-| Customer App | `http://nurturio-static-976193236457-prod.s3-website-us-east-1.amazonaws.com` |
-| Admin Panel | `http://nurturio-static-976193236457-prod.s3-website-us-east-1.amazonaws.com/admin/login.html` |
+| **Customer App** | **`https://dew2yodq4ld2q.cloudfront.net`** |
+| **Admin Panel** | **`https://dew2yodq4ld2q.cloudfront.net/admin/login.html`** |
+| **Chatbot Widget** | **`https://dew2yodq4ld2q.cloudfront.net/chatbot-widget.html?company=EMAIL`** |
 | API (Lambda) | `https://1pqeziijq3.execute-api.us-east-1.amazonaws.com` |
+| S3 Static (origin) | `http://nurturio-static-976193236457-prod.s3-website-us-east-1.amazonaws.com` |
 | Local Dev | `http://localhost:8080` |
 
 ## Architecture
