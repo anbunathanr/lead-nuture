@@ -1,0 +1,36 @@
+﻿{
+  "company_name":         "Your Company Name",
+  "company_url":          "https://yourcompany.com",
+  "booking_url":          "https://calendly.com/yourname",
+
+  "crm_base_url":         "http://your-frappe-crm:8000",
+  "crm_user":             "admin@yourcompany.com",
+  "crm_password":         "your_crm_password",
+  "leads_per_run":        "2",
+
+  "smtp_host":            "smtp.gmail.com",
+  "smtp_port":            "587",
+  "smtp_user":            "you@yourcompany.com",
+  "smtp_pass":            "your_app_password",
+  "smtp_from":            "hello@yourcompany.com",
+
+  "imap_host":            "imap.gmail.com",
+  "imap_user":            "you@yourcompany.com",
+  "imap_pass":            "your_app_password",
+
+  "slack_webhook":        "https://hooks.slack.com/services/...",
+  "telegram_token":       "your_telegram_bot_token",
+  "telegram_chat_id":     "your_telegram_chat_id",
+
+  "twilio_sid":           "ACxxxxxxxxxxxxxxxx",
+  "twilio_token":         "your_twilio_auth_token",
+  "twilio_whatsapp_from": "whatsapp:+14155238886",
+  "twilio_sms_from":      "+17405308047",
+
+  "groq_api_key":         "gsk_...",
+  "groq_model":           "gemma2-9b-it",
+
+  "created_at":           "",
+  "kb_built_at":          "",
+  "kb_chunk_count":       0
+}

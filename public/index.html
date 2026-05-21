@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nurturio — Login</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a; color: #e2e8f0; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center; padding: 1rem;
+    }
+    .card {
+      width: 100%; max-width: 400px;
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: 18px; padding: 2.5rem 2rem;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    }
+    .logo { text-align: center; margin-bottom: 2rem; }
+    .logo-text { font-size: 2rem; font-weight: 900; color: #f8fafc; letter-spacing: -0.03em; }
+    .logo-text span { color: #6366f1; }
+    .logo-sub { font-size: 0.82rem; color: #64748b; margin-top: 0.25rem; }
+    .tabs { display: flex; background: #0f172a; border-radius: 10px; padding: 4px; margin-bottom: 1.75rem; }
+    .tab {
+      flex: 1; padding: 0.55rem; text-align: center; border-radius: 7px;
+      font-size: 0.875rem; font-weight: 600; cursor: pointer;
+      color: #64748b; border: none; background: transparent; transition: all 0.15s;
+    }
+    .tab.active { background: #1e293b; color: #f8fafc; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+    label { display: block; font-size: 0.72rem; font-weight: 600; color: #94a3b8; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    input {
+      width: 100%; padding: 0.7rem 0.9rem; background: #0f172a;
+      border: 1.5px solid #334155; border-radius: 9px; color: #e2e8f0;
+      font-size: 0.9rem; outline: none; transition: border-color 0.2s; margin-bottom: 1rem;
+    }
+    input:focus { border-color: #6366f1; }
+    .btn {
+      width: 100%; padding: 0.8rem; background: #6366f1; color: #fff;
+      border: none; border-radius: 10px; font-size: 0.95rem; font-weight: 700;
+      cursor: pointer; transition: background 0.15s; margin-top: 0.25rem;
+    }
+    .btn:hover { background: #4f46e5; }
+    .btn:disabled { background: #334155; cursor: not-allowed; }
+    .error { background: #450a0a; border: 1px solid #f87171; color: #f87171; padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.82rem; margin-bottom: 1rem; display: none; }
+    .footer { text-align: center; margin-top: 1.5rem; font-size: 0.72rem; color: #334155; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <div class="logo-text"><span>Nurtu</span>rio</div>
+    <div class="logo-sub">AI-powered lead nurturing</div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" id="tab-login" onclick="switchTab('login')">Sign In</button>
+    <button class="tab" id="tab-signup" onclick="switchTab('signup')">Sign Up</button>
+  </div>
+
+  <div id="error-box" class="error"></div>
+
+  <div id="form-login">
+    <label>Email</label>
+    <input type="email" id="login-email" placeholder="you@company.com" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <label>Password</label>
+    <input type="password" id="login-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <button class="btn" id="login-btn" onclick="doLogin()">Sign In →</button>
+  </div>
+
+  <div id="form-signup" style="display:none">
+    <label>Email</label>
+    <input type="email" id="signup-email" placeholder="you@company.com" onkeydown="if(event.key==='Enter')doSignup()"/>
+    <label>Password</label>
+    <input type="password" id="signup-password" placeholder="Min. 6 characters" onkeydown="if(event.key==='Enter')doSignup()"/>
+    <button class="btn" id="signup-btn" onclick="doSignup()">Create Account →</button>
+  </div>
+</div>
+
+<script>
+  function switchTab(t) {
+    document.getElementById('tab-login').classList.toggle('active', t === 'login');
+    document.getElementById('tab-signup').classList.toggle('active', t === 'signup');
+    document.getElementById('form-login').style.display  = t === 'login'  ? '' : 'none';
+    document.getElementById('form-signup').style.display = t === 'signup' ? '' : 'none';
+    hideError();
+  }
+
+  function showError(msg) {
+    const b = document.getElementById('error-box');
+    b.textContent = '✕ ' + msg;
+    b.style.display = 'block';
+  }
+  function hideError() { document.getElementById('error-box').style.display = 'none'; }
+
+  function setLoading(btnId, loading) {
+    const b = document.getElementById(btnId);
+    b.disabled = loading;
+    b.textContent = loading ? '⏳ Please wait…' : (btnId === 'login-btn' ? 'Sign In →' : 'Create Account →');
+  }
+
+  async function doLogin() {
+    hideError();
+    const email    = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+    if (!email || !password) { showError('Please enter your email and password'); return; }
+    setLoading('login-btn', true);
+    try {
+      const res  = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      sessionStorage.setItem('nurturio_user', JSON.stringify({ email, company_name: data.company_name }));
+      if (data.token) localStorage.setItem('nurturio_customer_token', data.token);
+      window.location.href = '/dashboard.html';
+    } catch (e) { showError(e.message); }
+    setLoading('login-btn', false);
+  }
+
+  async function doSignup() {
+    hideError();
+    const email    = document.getElementById('signup-email').value.trim();
+    const password = document.getElementById('signup-password').value;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showError('Please enter a valid email address'); return; }
+    if (!password || password.length < 6) { showError('Password must be at least 6 characters'); return; }
+    setLoading('signup-btn', true);
+    try {
+      const res  = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, company_name: email.split('@')[0] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Registration failed');
+      sessionStorage.setItem('nurturio_user', JSON.stringify({ email, company_name: data.company_name }));
+      if (data.token) localStorage.setItem('nurturio_customer_token', data.token);
+      window.location.href = '/dashboard.html';
+    } catch (e) { showError(e.message); }
+    setLoading('signup-btn', false);
+  }
+</script>
+</body>
+</html>

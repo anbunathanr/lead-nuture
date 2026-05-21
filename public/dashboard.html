@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nurturio — Dashboard</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #0f172a; } ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    input, select, textarea { font-family: inherit; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .fade { animation: fadeIn 0.3s ease both; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const C = {
+  bg: '#0f172a', card: '#1e293b', border: '#334155',
+  accent: '#6366f1', text: '#e2e8f0', muted: '#64748b',
+  inputBg: '#0f172a', success: '#34d399', error: '#f87171',
+  warn: '#fbbf24',
+};
+
+const inputStyle = {
+  width: '100%', padding: '0.6rem 0.85rem', background: C.inputBg,
+  border: `1.5px solid ${C.border}`, borderRadius: 8, color: C.text,
+  fontSize: '0.875rem', outline: 'none', transition: 'border-color 0.2s',
+};
+
+function Field({ label, value, onChange, type = 'text', placeholder = '', hint, readOnly }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div style={{ marginBottom: '1rem' }}>
+      <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 600, color: '#94a3b8', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        {label}
+      </label>
+      <input
+        type={type} value={value || ''} readOnly={readOnly}
+        onChange={e => onChange && onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ ...inputStyle, borderColor: focused ? C.accent : C.border, opacity: readOnly ? 0.6 : 1, cursor: readOnly ? 'default' : 'text' }}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+      />
+      {hint && <div style={{ fontSize: '0.7rem', color: C.muted, marginTop: '0.25rem' }}>{hint}</div>}
+    </div>
+  );
+}
+
+function Toast({ msg, type, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 4000); return () => clearTimeout(t); }, []);
+  return (
+    <div style={{
+      position: 'fixed', bottom: '1.5rem', right: '1.5rem', zIndex: 9999,
+      background: type === 'success' ? '#064e3b' : '#450a0a',
+      border: `1px solid ${type === 'success' ? C.success : C.error}`,
+      color: type === 'success' ? C.success : C.error,
+      padding: '0.85rem 1.25rem', borderRadius: 10, fontSize: '0.875rem', fontWeight: 600,
+      boxShadow: '0 4px 24px rgba(0,0,0,0.4)', maxWidth: 360,
+    }}>
+      {type === 'success' ? '✓ ' : '✕ '}{msg}
+    </div>
+  );
+}
+
+/* ── Profile completion calculator ── */
+function calcCompletion(p) {
+  const fields = [
+    { key: 'company_name',   label: 'Company name',    weight: 10 },
+    { key: 'company_url',    label: 'Website URL',      weight: 10 },
+    { key: 'booking_url',    label: 'Booking URL',      weight: 10 },
+    { key: 'crm_base_url',   label: 'CRM URL',          weight: 20 },
+    { key: 'crm_user',       label: 'CRM username',     weight: 10 },
+    { key: 'crm_password',   label: 'CRM password',     weight: 10 },
+    { key: 'smtp_user',      label: 'SMTP username',    weight: 10 },
+    { key: 'smtp_pass',      label: 'SMTP password',    weight: 10 },
+    { key: 'kb_trained',     label: 'Knowledge base trained', weight: 10 },
+  ];
+  // Optional (alerts) — not counted toward 100%
+  let total = 0, done = 0;
+  const missing = [];
+  for (const f of fields) {
+    total += f.weight;
+    const val = f.key === 'kb_trained' ? p.kb_trained : p[f.key];
+    if (val && String(val).trim() && val !== '••••••••') {
+      done += f.weight;
+    } else {
+      missing.push(f.label);
+    }
+  }
+  return { pct: Math.round((done / total) * 100), missing };
+}
+
+/* ── Circular progress ring ── */
+function Ring({ pct }) {
+  const r = 54, circ = 2 * Math.PI * r;
+  const offset = circ - (pct / 100) * circ;
+  const color = pct === 100 ? C.success : pct >= 60 ? C.warn : C.error;
+  return (
+    <svg width="130" height="130" viewBox="0 0 130 130">
+      <circle cx="65" cy="65" r={r} fill="none" stroke={C.border} strokeWidth="10"/>
+      <circle cx="65" cy="65" r={r} fill="none" stroke={color} strokeWidth="10"
+        strokeDasharray={circ} strokeDashoffset={offset}
+        strokeLinecap="round" transform="rotate(-90 65 65)"
+        style={{ transition: 'stroke-dashoffset 0.6s ease' }}/>
+      <text x="65" y="60" textAnchor="middle" fill={color} fontSize="22" fontWeight="800">{pct}%</text>
+      <text x="65" y="78" textAnchor="middle" fill={C.muted} fontSize="11">complete</text>
+    </svg>
+  );
+}
+
+/* ══════════════════════════════════════════
+   MAIN APP
+══════════════════════════════════════════ */
+function App() {
+  const [user, setUser] = useState(null); // { email, company_name }
+  const [profile, setProfile] = useState({});
+  const [form, setForm] = useState({});
+  const [tab, setTab] = useState('profile');
+  const [toast, setToast] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [kbTrained, setKbTrained] = useState(false);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [manualText, setManualText] = useState('');
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualResult, setManualResult] = useState(null);
+
+  // Auth check — read from sessionStorage
+  useEffect(() => {
+    const saved = sessionStorage.getItem('nurturio_user');
+    if (!saved) { window.location.href = '/index.html'; return; }
+    const u = JSON.parse(saved);
+    setUser(u);
+    loadProfile(u.email);
+  }, []);
+
+  function authHeaders() {
+    const token = localStorage.getItem('nurturio_customer_token');
+    const h = { 'Content-Type': 'application/json' };
+    if (token) h['Authorization'] = 'Bearer ' + token;
+    return h;
+  }
+
+  async function loadProfile(email) {
+    try {
+      const token = localStorage.getItem('nurturio_customer_token');
+      const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile?email=' + encodeURIComponent(email), { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      setProfile(data);
+      setForm(data);
+      setKbTrained(!!data.kb_trained);
+    } catch {}
+  }
+
+  function set(k, v) { setForm(p => ({ ...p, [k]: v })); }
+  function showToast(msg, type) { setToast({ msg, type }); }
+
+  async function saveProfile() {
+    setSaving(true);
+    try {
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({ ...form, email: user.email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Save failed');
+      setProfile({ ...form, kb_trained: kbTrained });
+      showToast('Profile saved!', 'success');
+    } catch (e) { showToast(e.message, 'error'); }
+    setSaving(false);
+  }
+
+  async function trainKB() {
+    if (!form.company_url) { showToast('Enter your website URL first', 'error'); return; }
+    setKbLoading(true);
+    try {
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb/train', {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ company_url: form.company_url, company_name: form.company_name, email: user.email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Training failed');
+      setKbTrained(true);
+      // Save kb_trained flag to profile
+      await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
+        method: 'PUT', headers: authHeaders(),
+        body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
+      });
+      showToast(`Knowledge base trained — ${data.kb_chunks} chunks`, 'success');
+    } catch (e) { showToast(e.message, 'error'); }
+    setKbLoading(false);
+  }
+
+  async function addManualText() {
+    if (!manualText.trim()) return;
+    setManualLoading(true);
+    setManualResult(null);
+    try {
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb/manual', {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ text: manualText, email: user.email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      setKbTrained(true);
+      setManualResult({ success: true, chunks: data.kb_chunks });
+      setManualText('');
+      await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
+        method: 'PUT', headers: authHeaders(),
+        body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
+      });
+      showToast(`Text added — ${data.kb_chunks} total chunks`, 'success');
+    } catch (e) {
+      setManualResult({ success: false, error: e.message });
+      showToast(e.message, 'error');
+    }
+    setManualLoading(false);
+  }
+
+  async function uploadKBFile() {    if (!uploadFile) { showToast('Select a file first', 'error'); return; }
+    setUploading(true);
+    setUploadResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', uploadFile);
+      formData.append('email', user.email);
+      const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setKbTrained(true);
+      setUploadResult({ success: true, filename: data.filename, chunks: data.kb_chunks });
+      // Save kb_trained flag to profile
+      await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/profile', {
+        method: 'PUT', headers: authHeaders(),
+        body: JSON.stringify({ ...form, email: user.email, kb_trained: true }),
+      });
+      showToast(`File uploaded — ${data.kb_chunks} chunks added`, 'success');
+    } catch (e) {
+      setUploadResult({ success: false, error: e.message });
+      showToast(e.message, 'error');
+    }
+    setUploading(false);
+  }
+
+  function logout() {
+    fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/logout', { method: 'POST' }).catch(() => {});
+    sessionStorage.removeItem('nurturio_user');
+    window.location.href = '/index.html';
+  }
+
+  if (!user) return null;
+
+  const { pct, missing } = calcCompletion({ ...form, kb_trained: kbTrained });
+  const isComplete = pct === 100;
+
+  const TABS = [
+    { id: 'profile',  label: '👤 Profile' },
+    { id: 'crm',      label: '🔗 CRM' },
+    { id: 'email',    label: '📧 Email' },
+    { id: 'alerts',   label: '🔔 Alerts' },
+    { id: 'kb',       label: '📚 Knowledge Base' },
+  ];
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+
+      {/* ── Top nav ── */}
+      <div style={{ background: C.card, borderBottom: `1px solid ${C.border}`, padding: '0 2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
+        <div style={{ fontWeight: 900, fontSize: '1.1rem', color: '#f8fafc', letterSpacing: '-0.02em' }}>
+          <span style={{ color: C.accent }}>Nurtu</span>rio
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span style={{ fontSize: '0.82rem', color: C.muted }}>{user.email}</span>
+          <button onClick={logout} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, padding: '0.3rem 0.75rem', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer' }}>
+            Sign out
+          </button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 960, margin: '0 auto', padding: '2rem 1.5rem' }}>
+
+        {/* ── Profile completion hero ── */}
+        <div className="fade" style={{
+          background: C.card, border: `1px solid ${C.border}`, borderRadius: 16,
+          padding: '2rem', marginBottom: '2rem',
+          display: 'flex', alignItems: 'center', gap: '2rem', flexWrap: 'wrap',
+        }}>
+          <Ring pct={pct}/>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#f8fafc', marginBottom: '0.4rem' }}>
+              {isComplete ? '🎉 Profile Complete!' : `Complete your profile`}
+            </div>
+            <div style={{ fontSize: '0.875rem', color: C.muted, marginBottom: '1rem' }}>
+              {isComplete
+                ? 'Your Nurturio is fully configured and running.'
+                : `${100 - pct}% left — fill in the missing details to activate all features.`}
+            </div>
+            {!isComplete && missing.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                {missing.map(m => (
+                  <span key={m} style={{
+                    background: '#1e3a5f', border: '1px solid #3b82f6',
+                    color: '#93c5fd', borderRadius: 999, padding: '0.2rem 0.65rem',
+                    fontSize: '0.72rem', fontWeight: 600,
+                  }}>
+                    + {m}
+                  </span>
+                ))}
+              </div>
+            )}
+            {isComplete && (
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span style={{ background: '#064e3b', color: C.success, border: `1px solid ${C.success}`, borderRadius: 999, padding: '0.2rem 0.75rem', fontSize: '0.75rem', fontWeight: 700 }}>
+                  ● Live — your workflow is running
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Tabs ── */}
+        <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              padding: '0.5rem 1rem', borderRadius: 8, fontSize: '0.82rem', fontWeight: 600,
+              border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+              background: tab === t.id ? C.accent : C.card,
+              color: tab === t.id ? '#fff' : C.muted,
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        {/* ── Tab content ── */}
+        <div className="fade" key={tab} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: '1.75rem' }}>
+
+          {tab === 'profile' && (
+            <div>
+              <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1.25rem' }}>👤 Company Profile</h2>
+              <Field label="Email" value={user.email} readOnly/>
+              <Field label="Company Name" value={form.company_name} onChange={v => set('company_name', v)} placeholder="Digitrans Solutions"/>
+              <Field label="Website URL" value={form.company_url} onChange={v => set('company_url', v)} placeholder="https://yourcompany.com" hint="We train the AI on this URL"/>
+              <Field label="Booking / Calendar URL" value={form.booking_url} onChange={v => set('booking_url', v)} placeholder="https://calendar.app.google/..."/>
+              <button onClick={saveProfile} disabled={saving} style={{
+                background: saving ? C.border : C.accent, color: '#fff', border: 'none',
+                padding: '0.7rem 1.5rem', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem', cursor: saving ? 'not-allowed' : 'pointer',
+              }}>
+                {saving ? '⏳ Saving…' : '💾 Save Profile'}
+              </button>
+            </div>
+          )}
+
+          {tab === 'crm' && (
+            <div>
+              <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1.25rem' }}>🔗 CRM Connection</h2>
+              <Field label="CRM Base URL" value={form.crm_base_url} onChange={v => set('crm_base_url', v)} placeholder="http://your-crm:8000"/>
+              <Field label="CRM Username" value={form.crm_user} onChange={v => set('crm_user', v)} placeholder="admin@company.com"/>
+              <Field label="CRM Password" type="password" value={form.crm_password} onChange={v => set('crm_password', v)} placeholder="••••••••"/>
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.78rem', color: C.muted }}>
+                ⚡ The workflow processes <strong style={{ color: C.text }}>1 lead every 5 minutes</strong> — each lead gets a personalised email and SMS automatically.
+              </div>
+              <button onClick={saveProfile} disabled={saving} style={{
+                background: saving ? C.border : C.accent, color: '#fff', border: 'none',
+                padding: '0.7rem 1.5rem', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem', cursor: saving ? 'not-allowed' : 'pointer',
+              }}>
+                {saving ? '⏳ Saving…' : '💾 Save CRM Settings'}
+              </button>
+            </div>
+          )}
+
+          {tab === 'email' && (
+            <div>
+              <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1.25rem' }}>📧 Email / SMTP</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '0 0.75rem' }}>
+                <Field label="SMTP Host" value={form.smtp_host} onChange={v => set('smtp_host', v)} placeholder="smtp.gmail.com"/>
+                <Field label="Port" value={form.smtp_port} onChange={v => set('smtp_port', v)} placeholder="587"/>
+              </div>
+              <Field label="SMTP Username" value={form.smtp_user} onChange={v => set('smtp_user', v)} placeholder="you@gmail.com"/>
+              <Field label="SMTP Password / App Password" type="password" value={form.smtp_pass} onChange={v => set('smtp_pass', v)} placeholder="••••••••"
+                hint="For Gmail: use an App Password, not your account password"/>
+              <button onClick={saveProfile} disabled={saving} style={{
+                background: saving ? C.border : C.accent, color: '#fff', border: 'none',
+                padding: '0.7rem 1.5rem', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem', cursor: saving ? 'not-allowed' : 'pointer',
+              }}>
+                {saving ? '⏳ Saving…' : '💾 Save Email Settings'}
+              </button>
+            </div>
+          )}
+
+          {tab === 'alerts' && (
+            <div>
+              <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>🔔 Team Alerts</h2>
+              <p style={{ fontSize: '0.82rem', color: C.muted, marginBottom: '1.25rem' }}>
+                Get notified on Slack and Telegram when new leads come in or reply to emails. All optional.
+              </p>
+              <Field label="Slack Webhook URL" value={form.slack_webhook} onChange={v => set('slack_webhook', v)} placeholder="https://hooks.slack.com/services/…" hint="Get alerts in your Slack channel"/>
+              <Field label="Telegram Chat ID" value={form.telegram_chat_id} onChange={v => set('telegram_chat_id', v)} placeholder="7336265543" hint="Your personal Telegram chat ID — get alerts on your phone"/>
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '0.85rem 1rem', marginBottom: '1rem', fontSize: '0.78rem', color: C.muted }}>
+                💡 To get your Telegram Chat ID: message <strong style={{ color: C.text }}>@userinfobot</strong> on Telegram — it will reply with your chat ID.
+              </div>
+              <button onClick={saveProfile} disabled={saving} style={{
+                background: saving ? C.border : C.accent, color: '#fff', border: 'none',
+                padding: '0.7rem 1.5rem', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem', cursor: saving ? 'not-allowed' : 'pointer',
+              }}>
+                {saving ? '⏳ Saving…' : '💾 Save Alert Settings'}
+              </button>
+            </div>
+          )}
+
+          {tab === 'kb' && (
+            <div>
+              <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>📚 Knowledge Base</h2>
+              <p style={{ fontSize: '0.82rem', color: C.muted, marginBottom: '1.25rem' }}>
+                Train the AI on your company. Use any combination of the three methods below.
+              </p>
+
+              {/* Method 1 — Website URL */}
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1rem' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: C.text, marginBottom: '0.5rem' }}>🌐 Train from Website URL</div>
+                <p style={{ fontSize: '0.78rem', color: C.muted, marginBottom: '0.85rem' }}>Crawls your website and extracts content automatically.</p>
+                <Field label="Website URL" value={form.company_url} onChange={v => set('company_url', v)} placeholder="https://yourcompany.com"/>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <button onClick={trainKB} disabled={kbLoading} style={{
+                    background: kbLoading ? C.border : '#0f4c81', color: '#93c5fd',
+                    border: '1px solid #3b82f6', padding: '0.65rem 1.25rem',
+                    borderRadius: 10, fontWeight: 700, fontSize: '0.875rem', cursor: kbLoading ? 'not-allowed' : 'pointer',
+                  }}>
+                    {kbLoading ? '⏳ Crawling…' : '🧠 Crawl & Train'}
+                  </button>
+                  {kbTrained && <span style={{ color: C.success, fontSize: '0.82rem', fontWeight: 600 }}>✓ Trained</span>}
+                </div>
+              </div>
+
+              {/* Method 2 — Paste text */}
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1rem' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: C.text, marginBottom: '0.5rem' }}>✏️ Paste Text / Company Description</div>
+                <p style={{ fontSize: '0.78rem', color: C.muted, marginBottom: '0.85rem' }}>
+                  Paste your product descriptions, FAQs, pricing info, or any company content. Best for JS-rendered sites.
+                </p>
+                <textarea
+                  value={manualText}
+                  onChange={e => setManualText(e.target.value)}
+                  placeholder="Paste your company description, product details, FAQs, pricing, team info, etc. here...&#10;&#10;Example:&#10;We build AI-powered tools for engineering teams.&#10;Product 1: MISRA Checker — checks C/C++ code compliance...&#10;Product 2: Voicera — AI voice call center..."
+                  rows={8}
+                  style={{
+                    width: '100%', background: C.inputBg, border: `1.5px solid ${C.border}`,
+                    borderRadius: 8, color: C.text, fontSize: '0.875rem', padding: '0.7rem 0.9rem',
+                    outline: 'none', resize: 'vertical', lineHeight: 1.6, fontFamily: 'inherit',
+                    marginBottom: '0.75rem',
+                  }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <button onClick={addManualText} disabled={manualLoading || !manualText.trim()} style={{
+                    background: manualLoading || !manualText.trim() ? C.border : '#1e3a5f',
+                    color: manualLoading || !manualText.trim() ? C.muted : '#93c5fd',
+                    border: `1px solid ${manualLoading || !manualText.trim() ? C.border : '#3b82f6'}`,
+                    padding: '0.65rem 1.25rem', borderRadius: 10, fontWeight: 700,
+                    fontSize: '0.875rem', cursor: manualLoading || !manualText.trim() ? 'not-allowed' : 'pointer',
+                  }}>
+                    {manualLoading ? '⏳ Adding…' : '➕ Add to Knowledge Base'}
+                  </button>
+                  {manualResult && (
+                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: manualResult.success ? C.success : C.error }}>
+                      {manualResult.success ? `✓ Added — ${manualResult.chunks} total chunks` : `✕ ${manualResult.error}`}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Method 3 — File upload */}
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1rem' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: C.text, marginBottom: '0.5rem' }}>📎 Upload Document</div>
+                <p style={{ fontSize: '0.78rem', color: C.muted, marginBottom: '0.85rem' }}>
+                  Upload a PDF or TXT file — product brochure, deck, FAQ doc, etc.
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <label style={{
+                    background: C.card, border: `1.5px dashed ${C.border}`, borderRadius: 8,
+                    padding: '0.55rem 1rem', fontSize: '0.82rem', color: C.muted,
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem',
+                  }}>
+                    <input type="file" accept=".pdf,.txt,.docx" style={{ display: 'none' }}
+                      onChange={e => { setUploadFile(e.target.files[0] || null); setUploadResult(null); }}
+                    />
+                    {uploadFile ? `📄 ${uploadFile.name}` : '📂 Choose file (.pdf, .txt)'}
+                  </label>
+                  <button onClick={uploadKBFile} disabled={uploading || !uploadFile} style={{
+                    background: uploading || !uploadFile ? C.border : '#064e3b',
+                    color: uploading || !uploadFile ? C.muted : C.success,
+                    border: `1px solid ${uploading || !uploadFile ? C.border : C.success}`,
+                    padding: '0.55rem 1.1rem', borderRadius: 8, fontWeight: 700, fontSize: '0.82rem',
+                    cursor: uploading || !uploadFile ? 'not-allowed' : 'pointer',
+                  }}>
+                    {uploading ? '⏳ Uploading…' : '⬆️ Upload'}
+                  </button>
+                </div>
+                {uploadResult && (
+                  <div style={{ marginTop: '0.75rem', fontSize: '0.78rem', fontWeight: 600, color: uploadResult.success ? C.success : C.error }}>
+                    {uploadResult.success ? `✓ "${uploadResult.filename}" added — ${uploadResult.chunks} total chunks` : `✕ ${uploadResult.error}`}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '1rem', fontSize: '0.8rem', color: C.muted, lineHeight: 1.8 }}>
+                💡 <strong style={{ color: C.text }}>Tip:</strong> Re-train whenever you add new products to your website. The AI will automatically pick up the changes in the next email run.
+              </div>
+
+              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: '0.78rem', color: C.muted, marginBottom: '0.5rem' }}>
+                  Want to start fresh? Clear all existing KB chunks and re-train from scratch.
+                </div>
+                <button onClick={async () => {
+                  if (!confirm('Clear all knowledge base data? This cannot be undone.')) return;
+                  try {
+                    const res = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/kb?email=' + encodeURIComponent(user.email), {
+                      method: 'DELETE', headers: authHeaders()
+                    });
+                    if (!res.ok) throw new Error('Failed');
+                    setKbTrained(false);
+                    showToast('Knowledge base cleared', 'success');
+                  } catch (e) { showToast('Failed to clear KB', 'error'); }
+                }} style={{
+                  background: 'transparent', border: `1px solid #f87171`, color: '#f87171',
+                  padding: '0.45rem 1rem', borderRadius: 8, fontSize: '0.78rem',
+                  fontWeight: 600, cursor: 'pointer'
+                }}>
+                  🗑 Clear Knowledge Base
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+
+      {toast && <Toast msg={toast.msg} type={toast.type} onDone={() => setToast(null)}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

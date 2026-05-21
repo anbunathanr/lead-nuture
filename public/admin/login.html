@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nurturio Admin</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+    .card{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:2rem;width:100%;max-width:380px}
+    h1{font-size:1.3rem;font-weight:800;color:#f8fafc;margin-bottom:0.3rem}
+    .sub{font-size:0.82rem;color:#64748b;margin-bottom:1.75rem}
+    label{display:block;font-size:0.78rem;font-weight:600;color:#94a3b8;margin-bottom:0.35rem}
+    input{width:100%;padding:0.65rem 0.85rem;background:#0f172a;border:1.5px solid #334155;border-radius:8px;color:#e2e8f0;font-size:0.9rem;outline:none;margin-bottom:1rem}
+    input:focus{border-color:#6366f1}
+    button{width:100%;padding:0.8rem;background:#6366f1;color:#fff;border:none;border-radius:10px;font-size:0.95rem;font-weight:700;cursor:pointer}
+    button:hover{background:#4f46e5}
+    .err{background:#450a0a;border:1px solid #7f1d1d;border-radius:8px;padding:0.6rem 0.85rem;font-size:0.82rem;color:#fca5a5;margin-top:0.75rem;display:none}
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>🔐 Admin Login</h1>
+  <p class="sub">Nurturio — Admin Dashboard</p>
+  <label>Password</label>
+  <input type="password" id="pwd" placeholder="Enter admin password" onkeydown="if(event.key==='Enter')login()"/>
+  <button onclick="login()">Sign In</button>
+  <div class="err" id="err">Incorrect password</div>
+</div>
+<script>
+  const API = 'https://1pqeziijq3.execute-api.us-east-1.amazonaws.com';
+
+  async function login() {
+    const pwd = document.getElementById('pwd').value;
+    const res = await fetch(API + '/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      // Store token in localStorage for cross-origin S3 deployment
+      localStorage.setItem('nurturio_admin_token', data.token || 'authenticated');
+      localStorage.setItem('nurturio_admin_password', pwd);
+      window.location.href = 'dashboard.html';
+    } else {
+      document.getElementById('err').style.display = 'block';
+    }
+  }
+</script>
+</body>
+</html>
