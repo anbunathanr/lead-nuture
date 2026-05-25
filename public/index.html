@@ -21,13 +21,6 @@
     .logo-text { font-size: 2rem; font-weight: 900; color: #f8fafc; letter-spacing: -0.03em; }
     .logo-text span { color: #6366f1; }
     .logo-sub { font-size: 0.82rem; color: #64748b; margin-top: 0.25rem; }
-    .tabs { display: flex; background: #0f172a; border-radius: 10px; padding: 4px; margin-bottom: 1.75rem; }
-    .tab {
-      flex: 1; padding: 0.55rem; text-align: center; border-radius: 7px;
-      font-size: 0.875rem; font-weight: 600; cursor: pointer;
-      color: #64748b; border: none; background: transparent; transition: all 0.15s;
-    }
-    .tab.active { background: #1e293b; color: #f8fafc; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
     label { display: block; font-size: 0.72rem; font-weight: 600; color: #94a3b8; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.05em; }
     input {
       width: 100%; padding: 0.7rem 0.9rem; background: #0f172a;
@@ -43,7 +36,12 @@
     .btn:hover { background: #4f46e5; }
     .btn:disabled { background: #334155; cursor: not-allowed; }
     .error { background: #450a0a; border: 1px solid #f87171; color: #f87171; padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.82rem; margin-bottom: 1rem; display: none; }
-    .footer { text-align: center; margin-top: 1.5rem; font-size: 0.72rem; color: #334155; }
+    .success { background: #052e16; border: 1px solid #4ade80; color: #4ade80; padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.82rem; margin-bottom: 1rem; display: none; }
+    .otp-inputs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .otp-inputs input { width: 3rem; text-align: center; font-size: 1.3rem; font-weight: 700; letter-spacing: 0.1em; padding: 0.7rem 0.4rem; }
+    .back-link { text-align: center; margin-top: 1rem; font-size: 0.8rem; }
+    .back-link a { color: #6366f1; cursor: pointer; text-decoration: none; }
+    .back-link a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -53,92 +51,119 @@
     <div class="logo-sub">AI-powered lead nurturing</div>
   </div>
 
-  <div class="tabs">
-    <button class="tab active" id="tab-login" onclick="switchTab('login')">Sign In</button>
-    <button class="tab" id="tab-signup" onclick="switchTab('signup')">Sign Up</button>
-  </div>
-
   <div id="error-box" class="error"></div>
+  <div id="success-box" class="success"></div>
 
-  <div id="form-login">
+  <!-- Step 1: Email + Name + Mobile -->
+  <div id="step-auth">
+    <label>Name</label>
+    <input type="text" id="auth-name" placeholder="Your full name" onkeydown="if(event.key==='Enter')document.getElementById('auth-email').focus()"/>
     <label>Email</label>
-    <input type="email" id="login-email" placeholder="you@company.com" onkeydown="if(event.key==='Enter')doLogin()"/>
-    <label>Password</label>
-    <input type="password" id="login-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"/>
-    <button class="btn" id="login-btn" onclick="doLogin()">Sign In →</button>
+    <input type="email" id="auth-email" placeholder="you@company.com" onkeydown="if(event.key==='Enter')document.getElementById('auth-mobile').focus()"/>
+    <label>Mobile (optional)</label>
+    <input type="tel" id="auth-mobile" placeholder="+91 9876543210" onkeydown="if(event.key==='Enter')sendOTP()"/>
+    <button class="btn" id="auth-btn" onclick="sendOTP()">Send OTP →</button>
   </div>
 
-  <div id="form-signup" style="display:none">
-    <label>Email</label>
-    <input type="email" id="signup-email" placeholder="you@company.com" onkeydown="if(event.key==='Enter')doSignup()"/>
-    <label>Password</label>
-    <input type="password" id="signup-password" placeholder="Min. 6 characters" onkeydown="if(event.key==='Enter')doSignup()"/>
-    <button class="btn" id="signup-btn" onclick="doSignup()">Create Account →</button>
+  <!-- Step 2: OTP Verification -->
+  <div id="step-otp" style="display:none">
+    <p style="text-align:center;color:#94a3b8;font-size:0.85rem;margin-bottom:1.25rem;">Enter the 6-digit OTP sent to <strong id="otp-email-display"></strong></p>
+    <div class="otp-inputs">
+      <input type="text" maxlength="1" id="otp-1" oninput="otpNext(1)" onkeydown="otpBack(event,1)"/>
+      <input type="text" maxlength="1" id="otp-2" oninput="otpNext(2)" onkeydown="otpBack(event,2)"/>
+      <input type="text" maxlength="1" id="otp-3" oninput="otpNext(3)" onkeydown="otpBack(event,3)"/>
+      <input type="text" maxlength="1" id="otp-4" oninput="otpNext(4)" onkeydown="otpBack(event,4)"/>
+      <input type="text" maxlength="1" id="otp-5" oninput="otpNext(5)" onkeydown="otpBack(event,5)"/>
+      <input type="text" maxlength="1" id="otp-6" oninput="otpNext(6)" onkeydown="otpBack(event,6)"/>
+    </div>
+    <button class="btn" id="verify-btn" onclick="verifyOTP()">Verify & Sign In →</button>
+    <div class="back-link"><a onclick="showStep('auth')">← Back</a></div>
   </div>
 </div>
 
 <script>
-  function switchTab(t) {
-    document.getElementById('tab-login').classList.toggle('active', t === 'login');
-    document.getElementById('tab-signup').classList.toggle('active', t === 'signup');
-    document.getElementById('form-login').style.display  = t === 'login'  ? '' : 'none';
-    document.getElementById('form-signup').style.display = t === 'signup' ? '' : 'none';
-    hideError();
-  }
+  const API = 'https://1pqeziijq3.execute-api.us-east-1.amazonaws.com';
+  let pendingEmail = '';
 
-  function showError(msg) {
-    const b = document.getElementById('error-box');
-    b.textContent = '✕ ' + msg;
-    b.style.display = 'block';
+  function showError(msg) { const b = document.getElementById('error-box'); b.textContent = '✕ ' + msg; b.style.display = 'block'; document.getElementById('success-box').style.display = 'none'; }
+  function showSuccess(msg) { const b = document.getElementById('success-box'); b.textContent = '✓ ' + msg; b.style.display = 'block'; document.getElementById('error-box').style.display = 'none'; }
+  function hideMessages() { document.getElementById('error-box').style.display = 'none'; document.getElementById('success-box').style.display = 'none'; }
+
+  function showStep(step) {
+    hideMessages();
+    document.getElementById('step-auth').style.display = step === 'auth' ? '' : 'none';
+    document.getElementById('step-otp').style.display = step === 'otp' ? '' : 'none';
   }
-  function hideError() { document.getElementById('error-box').style.display = 'none'; }
 
   function setLoading(btnId, loading) {
     const b = document.getElementById(btnId);
     b.disabled = loading;
-    b.textContent = loading ? '⏳ Please wait…' : (btnId === 'login-btn' ? 'Sign In →' : 'Create Account →');
+    b.textContent = loading ? '⏳ Please wait…' : b.dataset.label;
   }
 
-  async function doLogin() {
-    hideError();
-    const email    = document.getElementById('login-email').value.trim();
-    const password = document.getElementById('login-password').value;
-    if (!email || !password) { showError('Please enter your email and password'); return; }
-    setLoading('login-btn', true);
+  // OTP input helpers
+  function otpNext(i) { if (document.getElementById('otp-' + i).value && i < 6) document.getElementById('otp-' + (i + 1)).focus(); }
+  function otpBack(e, i) { if (e.key === 'Backspace' && !document.getElementById('otp-' + i).value && i > 1) document.getElementById('otp-' + (i - 1)).focus(); }
+  function getOTP() { let otp = ''; for (let i = 1; i <= 6; i++) otp += document.getElementById('otp-' + i).value; return otp; }
+
+  async function sendOTP() {
+    hideMessages();
+    const name = document.getElementById('auth-name').value.trim();
+    const email = document.getElementById('auth-email').value.trim();
+    const mobile = document.getElementById('auth-mobile').value.trim();
+    if (!name) { showError('Please enter your name'); return; }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showError('Please enter a valid email'); return; }
+
+    const btn = document.getElementById('auth-btn');
+    btn.dataset.label = 'Send OTP →';
+    setLoading('auth-btn', true);
     try {
-      const res  = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/login', {
+      const res = await fetch(API + '/api/customer/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, name, mobile }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Login failed');
-      sessionStorage.setItem('nurturio_user', JSON.stringify({ email, company_name: data.company_name }));
+      if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
+      pendingEmail = email;
+      document.getElementById('otp-email-display').textContent = email;
+      showStep('otp');
+      showSuccess('OTP sent! Check your email inbox.');
+      document.getElementById('otp-1').focus();
+    } catch (e) { showError(e.message); }
+    setLoading('auth-btn', false);
+  }
+
+  async function verifyOTP() {
+    hideMessages();
+    const otp = getOTP();
+    if (otp.length !== 6) { showError('Please enter the complete 6-digit OTP'); return; }
+
+    const btn = document.getElementById('verify-btn');
+    btn.dataset.label = 'Verify & Sign In →';
+    setLoading('verify-btn', true);
+    try {
+      const res = await fetch(API + '/api/customer/verify-otp', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: pendingEmail, otp }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Verification failed');
+      sessionStorage.setItem('nurturio_user', JSON.stringify({ email: pendingEmail, company_name: data.company_name }));
       if (data.token) localStorage.setItem('nurturio_customer_token', data.token);
       window.location.href = '/dashboard.html';
     } catch (e) { showError(e.message); }
-    setLoading('login-btn', false);
+    setLoading('verify-btn', false);
   }
 
-  async function doSignup() {
-    hideError();
-    const email    = document.getElementById('signup-email').value.trim();
-    const password = document.getElementById('signup-password').value;
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showError('Please enter a valid email address'); return; }
-    if (!password || password.length < 6) { showError('Password must be at least 6 characters'); return; }
-    setLoading('signup-btn', true);
-    try {
-      const res  = await fetch('https://1pqeziijq3.execute-api.us-east-1.amazonaws.com/api/customer/register', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, company_name: email.split('@')[0] }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Registration failed');
-      sessionStorage.setItem('nurturio_user', JSON.stringify({ email, company_name: data.company_name }));
-      if (data.token) localStorage.setItem('nurturio_customer_token', data.token);
-      window.location.href = '/dashboard.html';
-    } catch (e) { showError(e.message); }
-    setLoading('signup-btn', false);
-  }
+  // Handle paste of full OTP
+  document.getElementById('otp-1').addEventListener('paste', (e) => {
+    const text = (e.clipboardData || window.clipboardData).getData('text').trim();
+    if (/^\d{6}$/.test(text)) {
+      e.preventDefault();
+      for (let i = 0; i < 6; i++) document.getElementById('otp-' + (i + 1)).value = text[i];
+      document.getElementById('otp-6').focus();
+    }
+  });
 </script>
 </body>
 </html>

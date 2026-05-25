@@ -15,20 +15,32 @@ const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const crypto = require('crypto');
 const https  = require('https');
-const bcrypt = require('bcrypt');
 
 const REGION = process.env.AWS_REGION || 'us-east-1';
 const CUSTOMERS_TABLE    = process.env.CUSTOMERS_TABLE    || 'nurturio-customers';
 const SESSIONS_TABLE     = process.env.SESSIONS_TABLE     || 'nurturio-sessions';
 const NUDGE_TABLE        = process.env.NUDGE_TABLE        || 'nurturio-nudge-schedule';
 const KB_BUCKET          = process.env.KB_BUCKET          || 'nurturio-kb';
-const BCRYPT_ROUNDS      = 10;
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const s3     = new S3Client({ region: REGION });
 const ssm    = new SSMClient({ region: REGION });
+const secretsManager = new SecretsManagerClient({ region: REGION });
+
+// ── Secrets Manager helper ───────────────────────────────
+let _frappeTokenCache = null;
+async function getFrappeApiToken() {
+  if (_frappeTokenCache) return _frappeTokenCache;
+  const res = await secretsManager.send(new GetSecretValueCommand({
+    SecretId: 'arn:aws:secretsmanager:us-east-1:976193236457:secret:opencrm/frappe-api-key-iQgSaZ'
+  }));
+  const secret = res.SecretString.trim();
+  _frappeTokenCache = secret.startsWith('token ') ? secret : `token ${secret}`;
+  return _frappeTokenCache;
+}
 
 // ── SSM helpers ──────────────────────────────────────────
 let _ssmCache = {};
@@ -177,56 +189,144 @@ function checkRateLimit(ip) {
 // ── Route handlers ───────────────────────────────────────
 
 async function handleCustomerRegister(body) {
-  const { email, password, company_name } = body;
-  if (!email || !password) return err('Email and password required', 400);
-  if (!company_name) return err('Company name required', 400);
+  const { email, name, mobile } = body;
+  if (!email) return err('Email is required', 400);
+  if (!name) return err('Name is required', 400);
 
+  // Generate 6-digit OTP
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+
+  // Trigger n8n webhook for CRM lead creation + OTP email
+  try {
+    const frappeToken = await getFrappeApiToken();
+    const nameParts = name.split(' ');
+    const payload = JSON.stringify({
+      first_name: nameParts[0] || name,
+      last_name: nameParts.slice(1).join(' ') || '',
+      email,
+      mobile: mobile || '',
+      organization: 'Nurturio',
+      action: 'create_lead',
+      otp,
+      send_otp: true
+    });
+    await new Promise((resolve) => {
+      const req = https.request({
+        hostname: 'n8n.digitransolutions.in',
+        path: '/webhook/digitranva-lead-intake',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': frappeToken, 'Content-Length': Buffer.byteLength(payload) }
+      }, (res) => { res.resume(); res.on('end', resolve); });
+      req.on('error', resolve);
+      req.write(payload);
+      req.end();
+    });
+  } catch (e) { console.log('[n8n] webhook failed:', e.message); }
+
+  // Check if user exists
   const existing = await dynamo.send(new GetCommand({ TableName: CUSTOMERS_TABLE, Key: { email } }));
-  if (existing.Item) return err('Account already exists', 409);
+  if (existing.Item) {
+    // Update OTP for existing user
+    await dynamo.send(new UpdateCommand({
+      TableName: CUSTOMERS_TABLE, Key: { email },
+      UpdateExpression: 'SET otp = :otp, #n = :name',
+      ExpressionAttributeNames: { '#n': 'name' },
+      ExpressionAttributeValues: { ':otp': otp, ':name': name },
+    }));
+    return ok({ requiresOTP: true, message: 'OTP sent to your email' });
+  }
 
-  const password_hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  // Create new customer
   const item = {
-    email, password_hash, company_name,
-    company_url: body.company_url || '',
-    booking_url: body.booking_url || '',
-    crm_base_url: body.crm_base_url || '',
-    crm_user: body.crm_user || '',
-    crm_password: body.crm_password || '',
-    smtp_host: body.smtp_host || 'smtp.gmail.com',
-    smtp_port: body.smtp_port || '587',
-    smtp_user: body.smtp_user || '',
-    smtp_pass: body.smtp_pass || '',
-    slack_webhook: body.slack_webhook || '',
-    telegram_chat_id: body.telegram_chat_id || '',
-    leads_per_run: body.leads_per_run || '2',
+    email, name, mobile: mobile || '', otp,
+    company_name: name,
+    company_url: '', booking_url: '',
+    crm_base_url: '', crm_user: '', crm_password: '',
+    smtp_host: 'smtp.gmail.com', smtp_port: '587', smtp_user: '', smtp_pass: '',
+    slack_webhook: '', telegram_chat_id: '', leads_per_run: '2',
     registered_at: new Date().toISOString(),
-    status: 'active',
-    kb_trained: false,
+    status: 'active', kb_trained: false,
   };
   await dynamo.send(new PutCommand({ TableName: CUSTOMERS_TABLE, Item: item }));
-  const token = await createSession(email);
-  return ok(
-    { success: true, company_name, token },
-    { 'Set-Cookie': setCookieHeader('customer_token', token) }
-  );
+  return ok({ requiresOTP: true, message: 'OTP sent to your email' });
 }
 
 async function handleCustomerLogin(body, ip) {
   if (!checkRateLimit(ip)) return err('Too many attempts. Try again in 15 minutes.', 429);
-  const { email, password } = body;
-  if (!email || !password) return err('Email and password required', 400);
+  const { email, name, mobile } = body;
+  if (!email) return err('Email is required', 400);
+
+  // Generate OTP
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+
+  // Trigger n8n webhook for OTP email
+  try {
+    const frappeToken = await getFrappeApiToken();
+    const nameParts = (name || '').split(' ');
+    const payload = JSON.stringify({
+      first_name: nameParts[0] || email.split('@')[0],
+      last_name: nameParts.slice(1).join(' ') || '',
+      email,
+      mobile: mobile || '',
+      organization: 'Nurturio',
+      action: 'create_lead',
+      otp,
+      send_otp: true
+    });
+    await new Promise((resolve) => {
+      const req = https.request({
+        hostname: 'n8n.digitransolutions.in',
+        path: '/webhook/digitranva-lead-intake',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': frappeToken, 'Content-Length': Buffer.byteLength(payload) }
+      }, (res) => { res.resume(); res.on('end', resolve); });
+      req.on('error', resolve);
+      req.write(payload);
+      req.end();
+    });
+  } catch (e) { console.log('[n8n] webhook failed:', e.message); }
+
+  const r = await dynamo.send(new GetCommand({ TableName: CUSTOMERS_TABLE, Key: { email } }));
+  if (!r.Item) {
+    // Auto-register on first login
+    const item = {
+      email, name: name || email.split('@')[0], mobile: mobile || '', otp,
+      company_name: name || email.split('@')[0],
+      company_url: '', booking_url: '',
+      crm_base_url: '', crm_user: '', crm_password: '',
+      smtp_host: 'smtp.gmail.com', smtp_port: '587', smtp_user: '', smtp_pass: '',
+      slack_webhook: '', telegram_chat_id: '', leads_per_run: '2',
+      registered_at: new Date().toISOString(),
+      status: 'active', kb_trained: false,
+    };
+    await dynamo.send(new PutCommand({ TableName: CUSTOMERS_TABLE, Item: item }));
+  } else {
+    // Update OTP
+    await dynamo.send(new UpdateCommand({
+      TableName: CUSTOMERS_TABLE, Key: { email },
+      UpdateExpression: 'SET otp = :otp',
+      ExpressionAttributeValues: { ':otp': otp },
+    }));
+  }
+
+  return ok({ requiresOTP: true, message: 'OTP sent to your email' });
+}
+
+async function handleVerifyOTP(body) {
+  const { email, otp } = body;
+  if (!email || !otp) return err('Email and OTP are required', 400);
 
   const r = await dynamo.send(new GetCommand({ TableName: CUSTOMERS_TABLE, Key: { email } }));
   if (!r.Item) return err('Account not found', 404);
+  if (r.Item.otp !== otp) return err('Invalid OTP', 401);
 
-  const valid = r.Item.password_hash.startsWith('$2')
-    ? await bcrypt.compare(password, r.Item.password_hash)
-    : crypto.createHash('sha256').update(password).digest('hex') === r.Item.password_hash;
-
-  if (!valid) return err('Invalid password', 401);
+  // Clear OTP after successful verification
+  await dynamo.send(new UpdateCommand({
+    TableName: CUSTOMERS_TABLE, Key: { email },
+    UpdateExpression: 'REMOVE otp',
+  }));
 
   const token = await createSession(email);
-  // Return token in body AND cookie so both S3-hosted and server-hosted frontends work
   return ok(
     { success: true, company_name: r.Item.company_name, token },
     { 'Set-Cookie': setCookieHeader('customer_token', token) }
@@ -711,6 +811,7 @@ exports.handler = async (event) => {
     // Customer auth
     if (method === 'POST' && path === '/api/customer/register') return await handleCustomerRegister(parsed);
     if (method === 'POST' && path === '/api/customer/login')    return await handleCustomerLogin(parsed, ip);
+    if (method === 'POST' && path === '/api/customer/verify-otp') return await handleVerifyOTP(parsed);
     if (method === 'POST' && path === '/api/customer/logout')   return await handleCustomerLogout(cookies);
     if (method === 'GET'  && path === '/api/customer/profile')  return await handleGetProfile(qs.email, cookies, authHeader);
     if (method === 'PUT'  && path === '/api/customer/profile')  return await handleUpdateProfile(parsed, cookies, authHeader);
